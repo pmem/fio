@@ -1,0 +1,27 @@
+# Example librpma server job
+[global]
+ioengine=librpma_server
+bindname=[IP to listen on]
+port=[port to listen on]
+
+# A single connection may use either a single fsdax file
+# or a part of device dax.
+
+# XXX For the simplicity sake, it is assumed each job registers its memory
+# region on its own. Whereas having a single memory region registered where
+# each thread has its range probably may be less stressful for the RNIC.
+
+# Each job starts listening for incoming connections
+# on a port = provided port option + job number - 1
+
+[server on fsdax]
+numjobs=[# of clients' connection possible]
+directory=[fsdax directory]
+size=[size]
+
+# OR
+[XXX server on device dax]
+numjobs=[XXX # of clients' connection possible]
+filename=[XX device dax]
+size=[XXX size of a device dax stride]
+offset_increment=[XXX segmentation per job increment]
