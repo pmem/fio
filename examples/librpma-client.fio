@@ -1,0 +1,17 @@
+# Example librpma client job
+[global]
+ioengine=librpma_client
+hostname=[server's listening IP address] 
+port=[server's listening port]
+
+# The client after establishing a connection will get a remote memory region
+# description. The remote memory should be divided in a way most natural for
+# fio e.g. offset_increment.
+
+[clients]
+numjobs=[# of working threads]
+iodepth=[total # of ious]
+iodepth_batch_submit=[# of ious to submit at once]
+readwrite=[read/randread]
+blocksize=[block size]
+size=[XXX a space for a single thread?]
