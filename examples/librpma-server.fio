@@ -5,8 +5,10 @@ bindname=[IP to listen on]
 port=[port to listen on]
 
 # The server side will spawn a single thread, opens and registers the whole
-# provided memory. The server will accept a connection, waits for it to end up,
+# provided memory. The server will accept a number of connections provided by
+# numconns option. After that, the server waits for all connections to end up,
 # and close itself.
 
 [server]
 filename=[XXX device dax or an existing fsdax file]
+numconns=[XXX # of expected connections]

@@ -3,6 +3,11 @@
 ioengine=librpma_client
 hostname=[server's listening IP address] 
 port=[server's listening port]
+thread
+group_reporting
+
+# IO amplification mechanisms allow preparing a memory for multiple copies
+# of ious where io_order indicates the order in which they will be used.
 
 # The client after establishing a connection will get a remote memory region
 # description. The remote memory should be divided in a way most natural for
@@ -10,8 +15,12 @@ port=[server's listening port]
 
 [clients]
 numjobs=[# of working threads]
+iomem=[XXX a local source of memory]
+io_amplification=[XXX # of possible copies of ious]
+io_order=[XXX seq/rand]
 iodepth=[total # of ious]
 iodepth_batch_submit=[# of ious to submit at once]
-readwrite=[read/randread]
+readwrite=[read/write/randread/randwrite/rw/randrw]
 blocksize=[block size]
 size=[XXX a space for a single thread?]
+offset_increment=[XXX segmentation per job increment]
