@@ -1,0 +1,9 @@
+# Example librpma server job
+[global]
+ioengine=librpma_server
+hostname=[IP to listen on]
+port=[port to listen on]
+
+# dummy
+[server]
+filename=[device dax or fsdax file]

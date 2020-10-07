@@ -1,0 +1,17 @@
+# Example librpma client job
+[global]
+ioengine=librpma_client
+hostname=[server's listening IP address] 
+port=[server's listening port]
+thread
+group_reporting
+
+[clients]
+numjobs=[# of working threads]
+readwrite=[read/write/randread/randwrite/rw/randrw]
+iodepth=[total # of ious]
+iodepth_batch_submit=[# of ious to submit at once]
+blocksize=[block size]
+# XXX each thread should have a separate space of defined size
+size=[XXX a space for a single thread?]
+offset_increment=[XXX should it be == size?]
