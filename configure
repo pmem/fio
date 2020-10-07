@@ -2802,6 +2802,10 @@ fi
 if test "$libverbs" = "yes" -a "$rdmacm" = "yes" ; then
   output_sym "CONFIG_RDMA"
 fi
+# XXX librpma specific test needed
+if test "$libverbs" = "yes" -a "$rdmacm" = "yes" ; then
+  output_sym "CONFIG_LIBRPMA"
+fi
 if test "$clock_gettime" = "yes" ; then
   output_sym "CONFIG_CLOCK_GETTIME"
 fi

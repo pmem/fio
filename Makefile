@@ -99,6 +99,11 @@ ifdef CONFIG_RDMA
   rdma_LIBS = -libverbs -lrdmacm
   ENGINES += rdma
 endif
+ifdef CONFIG_LIBRPMA
+  librpma_SRCS = engines/librpma.c
+  librpma_LIBS = -lrpma
+  ENGINES += librpma
+endif
 ifdef CONFIG_POSIXAIO
   SOURCE += engines/posixaio.c
 endif
