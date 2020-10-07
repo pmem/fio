@@ -47,6 +47,14 @@ static void client_cleanup(struct thread_data *td)
 
 static int client_setup(struct thread_data *td)
 {
+	/*
+	 * FIO says:
+	 * The setup() hook has to find out physical size of files or devices
+	 * for this thread, before we determine I/O size and range of our
+	 * targets. It is responsible for opening the files and setting
+	 * f->real_file_size to indicate the valid range for that file.
+	 */
+
 	return 0;
 }
 
