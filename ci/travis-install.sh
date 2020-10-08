@@ -43,6 +43,11 @@ case "$TRAVIS_OS_NAME" in
 	)
 	sudo apt-get -qq update
 	sudo apt-get install --no-install-recommends -qq -y "${pkgs[@]}"
+	# librpma is not supported on the 'x86' architecture
+	if [[ $CI_TARGET_ARCH != "x86" ]]; then
+		# install librpma from sources from GitHub
+		ci/travis-install-librpma.sh
+	fi
 	;;
     "osx")
 	brew update >/dev/null 2>&1
