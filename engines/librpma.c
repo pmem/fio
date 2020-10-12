@@ -19,6 +19,9 @@
 
 #include <librpma.h>
 
+#define rpma_td_verror(td, err, func) \
+	td_vmsg((td), (err), rpma_err_2str(err), (func))
+
 /* client's and server's common */
 
 /* XXX a private data structure borrowed from RPMA examples */
@@ -72,6 +75,9 @@ struct client_data {
 
 	/* a server's memory representation */
 	struct rpma_mr_remote *server_mr;
+
+	/* ious's base address memory registration (td->orig_buffer) */
+	struct rpma_mr_local *orig_mr;
 
 	/* in-memory queues */
 	struct io_u **io_us_queued;
@@ -188,7 +194,7 @@ static int client_init(struct thread_data *td)
 err_conn_disconnect:
 	(void) rpma_conn_disconnect(cd->conn);
 	(void) rpma_conn_next_event(cd->conn, &ev);
-	(void) rpma_conn_delete(cd->conn);
+	(void) rpma_conn_delete(&cd->conn);
 
 err_req_delete:
         if (req)
@@ -222,11 +228,46 @@ static int client_post_init(struct thread_data *td)
 
 static void client_cleanup(struct thread_data *td)
 {
-	/*
-	 * - rpma_mr_remote_delete cd->server_mr
-	 * - rpma_mr_dereg
-	 * - free peer
-	 */
+	struct client_data *cd = td->io_ops_data;
+	enum rpma_conn_event ev;
+	int ret;
+
+	/* delete the iou's memory registration */
+	if ((ret = rpma_mr_dereg(&cd->orig_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	/* delete the iou's memory registration */
+	if ((ret = rpma_mr_remote_delete(&cd->server_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_remote_delete");
+
+	/* initiate disconnection */
+	if ((ret = rpma_conn_disconnect(cd->conn)))
+		rpma_td_verror(td, ret, "rpma_conn_disconnect");
+
+	/* wait for disconnection to end up */
+	if ((ret = rpma_conn_next_event(cd->conn, &ev))) {
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
+	} else if (ev != RPMA_CONN_CLOSED) {
+		log_err(
+				"client_cleanup unexpected event received (%s != RPMA_CONN_CLOSED)\n",
+				rpma_utils_conn_event_2str(ev));
+	}
+
+	/* delete the connection */
+	if ((ret = rpma_conn_delete(&cd->conn)))
+		rpma_td_verror(td, ret, "rpma_conn_delete");
+
+	/* delete the peer */
+	if ((ret = rpma_peer_delete(&cd->peer)))
+		rpma_td_verror(td, ret, "rpma_peer_delete");
+
+	/* free the software queues */
+	free(cd->io_us_queued);
+	free(cd->io_us_flight);
+	free(cd->io_us_completed);
+
+	/* free the client's data */
+	free(td->io_ops_data);
 }
 
 static int client_setup(struct thread_data *td)
