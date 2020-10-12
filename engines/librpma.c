@@ -19,6 +19,9 @@
 
 #include <librpma.h>
 
+#define rpma_td_verror(td, err, func) \
+	td_vmsg((td), (err), rpma_err_2str(err), (func))
+
 /* client side implementation */
 
 struct client_options {
@@ -54,6 +57,9 @@ static struct fio_option fio_client_options[] = {
 
 struct client_data {
 	struct rpma_peer *peer;
+	
+	/* ious's base address memory registration (td->orig_buffer) */
+	struct rpma_mr_local *orig_mr;
 
 	/* in-memory queues */
 	struct io_u **io_us_queued;
@@ -82,11 +88,15 @@ static int client_init(struct thread_data *td)
 
 static int client_post_init(struct thread_data *td)
 {
-	/*
-	 * - rpma_mr_reg td->org_buffer
-	 */
+	struct client_data *cd =  td->io_ops_data;
+	int ret;
 
-	return 0;
+	if ((ret = rpma_mr_reg(cd->peer, td->orig_buffer, td->orig_buffer_size,
+			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
+			&cd->orig_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_reg");
+	return ret;
 }
 
 static void client_cleanup(struct thread_data *td)
