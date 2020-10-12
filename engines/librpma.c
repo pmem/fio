@@ -22,6 +22,18 @@
 #define rpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
+/* client's and server's common */
+
+/* XXX a private data structure borrowed from RPMA examples */
+#define DESCRIPTORS_MAX_SIZE 24
+struct example_common_data {
+	uint16_t data_offset;	/* user data offset */
+	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
+	uint8_t pcfg_desc_size;	/* size of pcfg_desc in descriptors[] */
+	/* buffer containing mr_desc and pcfg_desc */
+	char descriptors[DESCRIPTORS_MAX_SIZE];
+};
+
 /* client side implementation */
 
 struct client_options {
@@ -62,6 +74,9 @@ struct client_data {
 	/* ious's base address memory registration (td->orig_buffer) */
 	struct rpma_mr_local *orig_mr;
 
+	/* a server's memory representation */
+	struct rpma_mr_remote *server_mr;
+
 	/* in-memory queues */
 	struct io_u **io_us_queued;
 	int io_u_queued_nr;
@@ -78,6 +93,8 @@ static int client_init(struct thread_data *td)
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
+	struct rpma_conn_private_data pdata;
+	struct example_common_data *data;
 	int ret = 1;
 
 	/* allocate client's data */
@@ -147,6 +164,16 @@ static int client_init(struct thread_data *td)
 		goto err_conn_delete;
 	}
 
+	/* get the connection's private data sent from the server */
+	if ((ret = rpma_conn_get_private_data(cd->conn, &pdata)))
+		goto err_conn_delete;
+
+	/* create the server's memory representation */
+	data = pdata.ptr;
+	if ((ret = rpma_mr_remote_from_descriptor(&data->descriptors[0],
+			data->mr_desc_size, &cd->server_mr)))
+		goto err_conn_delete;
+
 	td->io_ops_data = cd;
 
 	return 0;
@@ -192,6 +219,7 @@ static int client_post_init(struct thread_data *td)
 static void client_cleanup(struct thread_data *td)
 {
 	/*
+	 * - rpma_mr_remote_delete cd->server_mr
 	 * - rpma_mr_dereg
 	 * - free peer
 	 */
@@ -199,6 +227,8 @@ static void client_cleanup(struct thread_data *td)
 
 static int client_setup(struct thread_data *td)
 {
+	struct client_data *cd = td->io_ops_data;
+
 	/*
 	 * FIO says:
 	 * The setup() hook has to find out physical size of files or devices
@@ -206,13 +236,23 @@ static int client_setup(struct thread_data *td)
 	 * targets. It is responsible for opening the files and setting
 	 * f->real_file_size to indicate the valid range for that file.
 	 */
+	struct fio_file *f = td->files[0];
+	int ret;
+	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &f->real_file_size)))
+		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
 
-	/*
-	 * - create a connection request and connect it
-	 * - read private data from the connection
-	 * - set f->real_file_size
-	 */
+	return ret;
+}
 
+static int client_open_file(struct thread_data *td, struct fio_file *f)
+{
+	/* NOP */
+	return 0;
+}
+
+static int client_close_file(struct thread_data *td, struct fio_file *f)
+{
+	/* NOP */
 	return 0;
 }
 
@@ -263,10 +303,12 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.init			= client_init,
 	.post_init		= client_post_init,
 	.setup			= client_setup,
+	.open_file		= client_open_file,
 	.queue			= client_queue,
 	.commit			= client_commit,
 	.getevents		= client_getevents,
 	.event			= client_event,
+	.close_file		= client_close_file,
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
