@@ -66,18 +66,105 @@ struct client_data {
 
 static int client_init(struct thread_data *td)
 {
-	struct server_options *o = td->eo;
+	struct client_options *o = td->eo;
+	struct client_data *cd;
+	struct ibv_context *dev = NULL;
+	struct rpma_conn_req *req = NULL;
+	struct rpma_conn *conn = NULL;
+	int ret;
+
 	(void) o; /* XXX delete when o will be used */
 
-	/*
-	 * - allocate server's data
-	 * - allocate all in-memory queues
-	 * - find ibv_context using o->hostname
-	 * - create new peer
-	 * - create a connection request (o->hostname, o->port) and connect it
-	 */
+	/* allocate client's data */
+	cd = malloc(sizeof(struct client_data));
+	if (cd == NULL) {
+		log_err("fio: malloc() failed: %m\n");
+		return 1;
+	}
+
+	memset(cd, 0, sizeof(*cd));
+	td->io_ops_data = cd;
+
+	/* allocate all in-memory queues */
+	cd->io_us_queued = malloc(td->o.iodepth * sizeof(struct io_u *));
+	if (cd->io_us_queued == NULL) {
+		log_err("fio: malloc() failed: %m\n");
+		goto err_free_cd;
+	}
+	memset(cd->io_us_queued, 0, td->o.iodepth * sizeof(struct io_u *));
+	cd->io_u_queued_nr = 0;
+
+	cd->io_us_flight = malloc(td->o.iodepth * sizeof(struct io_u *));
+	if (cd->io_us_flight == NULL) {
+		log_err("fio: malloc() failed: %m\n");
+		goto err_free_io_us_queued;
+	}
+	memset(cd->io_us_flight, 0, td->o.iodepth * sizeof(struct io_u *));
+	cd->io_u_flight_nr = 0;
+
+	cd->io_us_completed = malloc(td->o.iodepth * sizeof(struct io_u *));
+	if (cd->io_us_completed == NULL) {
+		log_err("fio: malloc() failed: %m\n");
+		goto err_free_io_us_flight;
+	}
+	memset(cd->io_us_completed, 0, td->o.iodepth * sizeof(struct io_u *));
+	cd->io_u_completed_nr = 0;
+
+	/* obtain an IBV context for a remote IP address */
+	ret = rpma_utils_get_ibv_context(o->hostname,
+				RPMA_UTIL_IBV_CONTEXT_REMOTE,
+				&dev);
+	if (ret) {
+		log_err("fio: rpma_utils_get_ibv_context() failed: %s\n",
+			rpma_err_2str(ret));
+		goto err_free_io_us_completed;
+	}
+
+	/* create a new peer object */
+	ret = rpma_peer_new(dev, &cd->peer);
+	if (ret) {
+		log_err("fio: rpma_peer_new() failed: %s\n",
+			rpma_err_2str(ret));
+		goto err_free_io_us_completed;
+	}
+
+	/* create a connection request */
+	ret = rpma_conn_req_new(cd->peer, o->hostname, o->port, NULL, &req);
+	if (ret) {
+		log_err("fio: rpma_conn_req_new() failed: %s\n",
+			rpma_err_2str(ret));
+		goto err_peer_delete;
+	}
+
+	/* connect the connection request and obtain the connection object */
+	ret = rpma_conn_req_connect(&req, NULL, &conn);
+	if (ret) {
+		log_err("fio: rpma_conn_req_connect() failed: %s\n",
+			rpma_err_2str(ret));
+		goto err_req_delete;
+	}
 
 	return 0;
+
+err_req_delete:
+        if (req)
+                (void) rpma_conn_req_delete(&req);
+err_peer_delete:
+        (void) rpma_peer_delete(&cd->peer);
+
+err_free_io_us_completed:
+	free(cd->io_us_completed);
+
+err_free_io_us_flight:
+	free(cd->io_us_flight);
+
+err_free_io_us_queued:
+	free(cd->io_us_queued);
+
+err_free_cd:
+	free(cd);
+
+	return 1;
 }
 
 static int client_post_init(struct thread_data *td)
