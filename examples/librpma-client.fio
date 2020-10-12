@@ -1,0 +1,16 @@
+# Example of the librpma client job
+[global]
+ioengine=librpma_client
+hostname=[IP address the server is listening on] 
+port=[port the server is listening on]
+
+# The client will get a remote memory region description after establishing
+# a connection.
+
+[client]
+iomem_align=[page size]
+iodepth=[total # of ious]
+iodepth_batch_submit=[# of ious to submit at once]
+readwrite=[read/randread]
+blocksize=[block size]
+size=[XXX a space for a single thread?]
