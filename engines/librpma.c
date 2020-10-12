@@ -112,89 +112,104 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 /* server side implementation */
 
 struct server_options {
-	int dummy;
+	char *bindname;
+	char *port;
 };
 
 static struct fio_option fio_server_options[] = {
+	{
+		.name	= "bindname",
+		.lname	= "rpma_server bindname",
+		.type	= FIO_OPT_STR_STORE,
+		.off1	= offsetof(struct server_options, bindname),
+		.help	= "IP address to listen on for incoming connections",
+		.def    = "",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= "port",
+		.lname	= "rpma_server port",
+		.type	= FIO_OPT_STR_STORE,
+		.off1	= offsetof(struct server_options, port),
+		.help	= "port to listen on for incoming connections",
+		.def    = "7204",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
 	{
 		.name	= NULL,
 	},
 };
 
+struct server_data {
+	struct rpma_peer *peer;
+};
+
 static int server_init(struct thread_data *td)
 {
-	return 0;
-}
+	struct server_options *o = td->eo;
+	(void) o; /* XXX delete when o will be used */
 
-static int server_post_init(struct thread_data *td)
-{
-	return 0;
-}
-
-static void server_cleanup(struct thread_data *td)
-{
-}
-
-static int server_setup(struct thread_data *td)
-{
 	/*
-	 * FIO says:
-	 * The setup() hook has to find out physical size of files or devices
-	 * for this thread, before we determine I/O size and range of our
-	 * targets. It is responsible for opening the files and setting
-	 * f->real_file_size to indicate the valid range for that file.
+	 * - allocate server's data
+	 * - find ibv_context using o->bindname
+	 * - create new peer and endpoint (o->bindname and o->port)
 	 */
 
 	return 0;
 }
 
+static void server_cleanup(struct thread_data *td)
+{
+	/*
+	 * - shutdown ep
+	 * - free peer
+	 */
+}
+
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
+	/*
+	 * - pmem_map_file
+	 * - rpma_mr_reg -> f->engine_data
+	 */
+
 	return 0;
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
+	/*
+	 * - rpma_mr_dereg
+	 * - pmem_unmap
+	 */
+
 	return 0;
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
+	/*
+	 * - XXX make sure it is called only once!
+	 * - accept a single connection
+	 * - wait for the connection to close and cleanup
+	 */
+
 	return FIO_Q_BUSY;
-}
-
-static int server_commit(struct thread_data *td)
-{
-	return 0;
-}
-
-static int server_getevents(struct thread_data *td, unsigned int min,
-				unsigned int max, const struct timespec *t)
-{
-	return 0;
-}
-
-static struct io_u *server_event(struct thread_data *td, int event)
-{
-	return 0;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_server",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= server_init,
-	.post_init		= server_post_init,
-	.setup			= server_setup,
 	.open_file		= server_open_file,
 	.close_file		= server_close_file,
 	.queue			= server_queue,
-	.commit			= server_commit,
-	.getevents		= server_getevents,
-	.event			= server_event,
 	.cleanup		= server_cleanup,
-	/* XXX flags require consideration */
-	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
+	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
+				  FIO_NOSTATS,
 	.options		= fio_server_options,
 	.option_struct_size	= sizeof(struct server_options),
 };
