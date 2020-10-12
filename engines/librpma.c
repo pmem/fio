@@ -19,17 +19,17 @@
 
 #include <librpma.h>
 
-struct rpma_options {
-	unsigned dummy;
+/* client side implementation */
+
+struct client_options {
+	int dummy;
 };
 
-static struct fio_option options[] = {
+static struct fio_option fio_client_options[] = {
 	{
 		.name	= NULL,
 	},
 };
-
-/* client side implementation */
 
 static int client_init(struct thread_data *td)
 {
@@ -105,11 +105,21 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= options,
-	.option_struct_size	= sizeof(struct rpma_options),
+	.options		= fio_client_options,
+	.option_struct_size	= sizeof(struct client_options),
 };
 
 /* server side implementation */
+
+struct server_options {
+	int dummy;
+};
+
+static struct fio_option fio_server_options[] = {
+	{
+		.name	= NULL,
+	},
+};
 
 static int server_init(struct thread_data *td)
 {
@@ -185,8 +195,8 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.cleanup		= server_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= options,
-	.option_struct_size	= sizeof(struct rpma_options),
+	.options		= fio_server_options,
+	.option_struct_size	= sizeof(struct server_options),
 };
 
 /* register both engines */
