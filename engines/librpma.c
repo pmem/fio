@@ -244,8 +244,8 @@ static void client_cleanup(struct thread_data *td)
 		rpma_td_verror(td, ret, "rpma_conn_next_event");
 	} else if (ev != RPMA_CONN_CLOSED) {
 		log_err(
-				"client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
-				rpma_utils_conn_event_2str(ev));
+			"client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
+			rpma_utils_conn_event_2str(ev));
 	}
 
 	/* delete the connection */
