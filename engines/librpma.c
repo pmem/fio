@@ -19,6 +19,9 @@
 
 #include <librpma.h>
 
+#define rpma_td_verror(td, err, func) \
+	td_vmsg((td), (err), rpma_err_2str(err), (func))
+
 /* client side implementation */
 
 struct client_options {
@@ -54,6 +57,7 @@ static struct fio_option fio_client_options[] = {
 
 struct client_data {
 	struct rpma_peer *peer;
+	struct rpma_conn *conn;
 
 	/* in-memory queues */
 	struct io_u **io_us_queued;
@@ -66,18 +70,104 @@ struct client_data {
 
 static int client_init(struct thread_data *td)
 {
-	struct server_options *o = td->eo;
-	(void) o; /* XXX delete when o will be used */
+	struct client_options *o = td->eo;
+	struct client_data *cd;
+	struct ibv_context *dev = NULL;
+	struct rpma_conn_req *req = NULL;
+	enum rpma_conn_event event;
+	int ret = 1;
 
-	/*
-	 * - allocate server's data
-	 * - allocate all in-memory queues
-	 * - find ibv_context using o->hostname
-	 * - create new peer
-	 * - create a connection request (o->hostname, o->port) and connect it
-	 */
+	/* allocate client's data */
+	cd = calloc(1, sizeof(struct client_data));
+	if (cd == NULL) {
+		rpma_td_verror(td, errno, "calloc()");
+		return 1;
+	}
+
+	/* allocate all in-memory queues */
+	cd->io_us_queued = calloc(1, td->o.iodepth * sizeof(struct io_u *));
+	if (cd->io_us_queued == NULL) {
+		rpma_td_verror(td, errno, "calloc()");
+		goto err_free_cd;
+	}
+
+	cd->io_us_flight = calloc(1, td->o.iodepth * sizeof(struct io_u *));
+	if (cd->io_us_flight == NULL) {
+		rpma_td_verror(td, errno, "calloc()");
+		goto err_free_io_us_queued;
+	}
+
+	cd->io_us_completed = calloc(1, td->o.iodepth * sizeof(struct io_u *));
+	if (cd->io_us_completed == NULL) {
+		rpma_td_verror(td, errno, "calloc()");
+		goto err_free_io_us_flight;
+	}
+
+	/* obtain an IBV context for a remote IP address */
+	ret = rpma_utils_get_ibv_context(o->hostname,
+				RPMA_UTIL_IBV_CONTEXT_REMOTE,
+				&dev);
+	if (ret) {
+		rpma_td_verror(td, errno, "rpma_utils_get_ibv_context()");
+		goto err_free_io_us_completed;
+	}
+
+	/* create a new peer object */
+	ret = rpma_peer_new(dev, &cd->peer);
+	if (ret) {
+		rpma_td_verror(td, errno, "rpma_peer_new()");
+		goto err_free_io_us_completed;
+	}
+
+	/* create a connection request */
+	ret = rpma_conn_req_new(cd->peer, o->hostname, o->port, NULL, &req);
+	if (ret) {
+		rpma_td_verror(td, errno, "rpma_conn_req_new()");
+		goto err_peer_delete;
+	}
+
+	/* connect the connection request and obtain the connection object */
+	ret = rpma_conn_req_connect(&req, NULL, &cd->conn);
+	if (ret) {
+		rpma_td_verror(td, errno, "rpma_conn_req_connect()");
+		goto err_req_delete;
+	}
+
+	/* wait for the connection to establish */
+	ret = rpma_conn_next_event(cd->conn, &event);
+	if (ret) {
+		goto err_conn_delete;
+	} else if (event != RPMA_CONN_ESTABLISHED) {
+		log_err("rpma_conn_next_event() returned an unexptected event\n");
+		goto err_conn_delete;
+	}
+
+	td->io_ops_data = cd;
 
 	return 0;
+
+err_conn_delete:
+	(void) rpma_conn_delete(&cd->conn);
+
+err_req_delete:
+        if (req)
+                (void) rpma_conn_req_delete(&req);
+err_peer_delete:
+        (void) rpma_peer_delete(&cd->peer);
+
+err_free_io_us_completed:
+	free(cd->io_us_completed);
+
+err_free_io_us_flight:
+	free(cd->io_us_flight);
+
+err_free_io_us_queued:
+	free(cd->io_us_queued);
+
+err_free_cd:
+	free(cd);
+
+	return ret;
 }
 
 static int client_post_init(struct thread_data *td)
