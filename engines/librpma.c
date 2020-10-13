@@ -22,6 +22,11 @@
 /* client side implementation */
 
 struct client_options {
+	/*
+	 * FIO considers .off1 == 0 absent so the first meaningful field has to
+	 * have padding ahead of it.
+	 */
+	void *pad;
 	char *hostname;
 	char *port;
 };
@@ -177,6 +182,11 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 /* server side implementation */
 
 struct server_options {
+	/*
+	 * FIO considers .off1 == 0 absent so the first meaningful field has to
+	 * have padding ahead of it.
+	 */
+	void *pad;
 	int dummy;
 };
 
