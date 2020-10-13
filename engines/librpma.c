@@ -306,14 +306,92 @@ static enum fio_q_status client_queue(struct thread_data *td,
 	return FIO_Q_BUSY;
 }
 
+static void client_queued(struct thread_data *td, struct io_u **io_us,
+			      unsigned int nr)
+{
+	struct client_data *cd = td->io_ops_data;
+	int i;
+
+	for (i = 0; i < nr; i++) {
+		struct io_u *io_u = io_us[i];
+
+		/* queued -> flight */
+		cd->io_us_flight[cd->io_u_flight_nr] = io_u;
+		cd->io_u_flight_nr++;
+
+		io_u_queued(td, io_u);
+	}
+}
+
+static int client_execute(struct thread_data *td, struct io_u **io_us,
+				unsigned int nr)
+{
+	unsigned int i;
+	int ret;
+
+	struct client_data *cd = td->io_ops_data;
+
+	size_t orig_size = td->orig_buffer_size;
+	size_t server_size = td->files[0]->real_file_size;
+	size_t length = (orig_size < server_size) ? orig_size : server_size;
+
+	for (i = 0; i < nr; i++) {
+		enum fio_ddir ddir = io_us[i]->ddir;
+		if (ddir == DDIR_READ) {
+			/* post an RDMA read operation */
+			int ret = rpma_read(cd->conn,
+					cd->orig_mr, 0,
+					cd->server_mr, 0,
+					length,
+					RPMA_F_COMPLETION_ALWAYS,
+					&i);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_read");
+				return -1;
+			}
+		} else if (ddir == DDIR_WRITE) {
+			/* post an RDMA write operation */
+			ret = rpma_write(cd->conn,
+					cd->server_mr, 0,
+					cd->orig_mr, 0,
+					length,
+					RPMA_F_COMPLETION_ALWAYS,
+					&i);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_write");
+				return -1;
+			}
+		}
+	}
+
+	return i;
+}
+
 static int client_commit(struct thread_data *td)
 {
-	/*
-	 * - execute all io_us from queued[]
-	 * - move executed io_us to flight[]
-	 */
+	struct client_data *cd = td->io_ops_data;
+	struct io_u **io_us;
+	int ret;
 
-	return 0;
+	if (!cd->io_us_queued)
+		return 0;
+
+	io_us = cd->io_us_queued;
+	while (cd->io_u_queued_nr) {
+		/* execute all io_us from queued[] */
+		ret = client_execute(td, io_us, cd->io_u_queued_nr);
+		if (ret <= 0)
+			break;
+
+		/* move executed io_us to flight[] */
+		client_queued(td, io_us, ret);
+		io_u_mark_submit(td, ret);
+		cd->io_u_queued_nr -= ret;
+		io_us += ret;
+		ret = 0;
+	}
+
+	return ret;
 }
 
 static int client_getevents(struct thread_data *td, unsigned int min,
