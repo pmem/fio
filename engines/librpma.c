@@ -337,6 +337,20 @@ static struct io_u *client_event(struct thread_data *td, int event)
 	return 0;
 }
 
+static char *client_errdetails(struct io_u *io_u)
+{
+	/* get a string representation of the error */
+	enum ibv_wc_status status = io_u->error;
+	const char *status_str = ibv_wc_status_str(status);
+
+	/* allocate and copy the error string representation */
+	char *details = malloc(strlen(status_str) + 1);
+	strcpy(details, status_str);
+
+	/* the FIO frees the returned string when it will become obsolete */
+	return details;
+}
+
 FIO_STATIC struct ioengine_ops ioengine_client = {
 	.name			= "librpma_client",
 	.version		= FIO_IOOPS_VERSION,
@@ -348,6 +362,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.commit			= client_commit,
 	.getevents		= client_getevents,
 	.event			= client_event,
+	.errdetails		= client_errdetails,
 	.close_file		= client_close_file,
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
