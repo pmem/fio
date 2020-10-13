@@ -6,16 +6,11 @@ case "$TRAVIS_OS_NAME" in
     "linux")
 	# Architecture-dependent packages.
 	pkgs=(
-	    libaio-dev
 	    libcunit1-dev
-	    libfl-dev
 	    libgoogle-perftools-dev
 	    libibverbs-dev
-	    libiscsi-dev
 	    libnuma-dev
-	    librbd-dev
 	    librdmacm-dev
-	    libz-dev
 	)
 	case "$CI_TARGET_ARCH" in
 	    "x86")
@@ -26,12 +21,8 @@ case "$TRAVIS_OS_NAME" in
 	        )
 		;;
 	    "amd64")
-		pkgs+=(nvidia-cuda-dev)
 		;;
 	esac
-	if [[ $CI_TARGET_ARCH != "x86" ]]; then
-		pkgs+=(glusterfs-common)
-	fi
 	# Architecture-independent packages and packages for which we don't
 	# care about the architecture.
 	pkgs+=(
