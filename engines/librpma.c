@@ -316,25 +316,93 @@ static int client_commit(struct thread_data *td)
 	return 0;
 }
 
+/*
+ * XXX current implementation ignores provided min and max
+ */
 static int client_getevents(struct thread_data *td, unsigned int min,
 				unsigned int max, const struct timespec *t)
 {
-	/*
-	 * - wait for a completion
-	 * - move completed io_us to completed[]
-	 * - return # of io_us completed with collected completion
-	 */
+	struct client_data *cd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	unsigned int io_us_error = 0;
+	/* io_u->index of completed io_u (cmpl.op_context) */
+	unsigned int io_u_index;
+	/* # of completed io_us */
+	int cmpl_num = 0;
+	/* helpers */
+	struct io_u *io_u;
+	int i;
+	int ret;
 
-	return 0;
+	/* wait for a completion */
+	if ((ret = rpma_conn_completion_wait(cd->conn))) {
+		rpma_td_verror(td, ret, "rpma_conn_completion_wait");
+		return -1;
+	}
+
+	/* get the completion */
+	if ((ret = rpma_conn_completion_get(cd->conn, &cmpl))) {
+		rpma_td_verror(td, ret, "rpma_conn_completion_get");
+		return -1;
+	}
+
+	/* if io_us have completed with error */
+	if (cmpl.op_status != IBV_WC_SUCCESS)
+		io_us_error = cmpl.op_status;
+
+	/* lookup an io_u being completed */
+	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
+	for (i = 0; i < cd->io_u_flight_nr; ++i) {
+		if (cd->io_us_flight[i]->index == io_u_index) {
+			cmpl_num = i + 1;
+			break;
+		}
+	}
+
+	/* if no matching io_u have been found */
+	if (cmpl_num == 0) {
+		log_err(
+				"no matching io_u for received completion found (io_u_index=%u)\n",
+				io_u_index);
+		return -1;
+	}
+
+	/* move completed io_us to the completed in-memory queue */
+	for (i = 0; i < cmpl_num; ++i) {
+		/* get and prepare io_u */
+		io_u = cd->io_us_flight[i];
+		io_u->error = io_us_error;
+
+		/* append to the queue */
+		cd->io_us_completed[cd->io_u_completed_nr] = io_u;
+		++cd->io_u_completed_nr;
+	}
+
+	/* remove completed io_us from the flight queue */
+	for (i = cmpl_num; i < cd->io_u_flight_nr; ++i)
+		cd->io_us_flight[i - cmpl_num] = cd->io_us_flight[i];
+	cd->io_u_flight_nr -= cmpl_num;
+
+	return cmpl_num;
 }
 
 static struct io_u *client_event(struct thread_data *td, int event)
 {
-	/*
-	 * - take io_us from completed[] (at the end it should be empty)
-	 */
+	struct client_data *cd = td->io_ops_data;
+	struct io_u *io_u;
+	int i;
 
-	return 0;
+	/* get the first io_u from the queue */
+	io_u = cd->io_us_completed[0];
+
+	/* remove the first io_u from the queue */
+	for (i = 1; i < cd->io_u_completed_nr; ++i)
+		cd->io_us_completed[i - 1] = cd->io_us_completed[i];
+	--cd->io_u_completed_nr;
+
+	dprint_io_u(io_u, "client_event");
+
+	return io_u;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
