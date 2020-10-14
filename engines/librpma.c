@@ -313,10 +313,68 @@ static enum fio_q_status client_queue(struct thread_data *td,
 
 static int client_commit(struct thread_data *td)
 {
-	/*
-	 * - execute all io_us from queued[]
-	 * - move executed io_us to flight[]
-	 */
+	struct client_data *cd = td->io_ops_data;
+	int flags = RPMA_F_COMPLETION_ON_ERROR;
+	struct timespec now;
+	bool fill_time;
+	int ret;
+	int i;
+
+	if (!cd->io_us_queued)
+		return -1;
+
+	/* execute all io_us from queued[] */
+	for (i = 0; i < cd->io_u_queued_nr; i++) {
+		struct io_u *io_u = cd->io_us_queued[i];
+
+		if (i == cd->io_u_queued_nr - 1)
+			flags = RPMA_F_COMPLETION_ALWAYS;
+
+		if (io_u->ddir == DDIR_READ) {
+			/* post an RDMA read operation */
+			size_t dst_offset = (char *)(io_u->xfer_buf) - td->orig_buffer;
+			size_t src_offset = io_u->offset;
+			ret = rpma_read(cd->conn,
+					cd->orig_mr, dst_offset,
+					cd->server_mr, src_offset,
+					io_u->xfer_buflen,
+					flags,
+					(void *)(uintptr_t)io_u->index);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_read");
+				return -1;
+			}
+		} else {
+			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
+			return -1;
+		}
+	}
+
+	if ((fill_time = fio_fill_issue_time(td)))
+		fio_gettime(&now, NULL);
+
+	/* move executed io_us from queued[] to flight[] */
+	for (i = 0; i < cd->io_u_queued_nr; i++) {
+		struct io_u *io_u = cd->io_us_queued[i];
+
+		/* FIO does not do this if the engine is asynchronous */
+		if (fill_time)
+			memcpy(&io_u->issue_time, &now, sizeof(now));
+
+		/* move executed io_us from queued[] to flight[] */
+		cd->io_us_flight[cd->io_u_flight_nr] = io_u;
+		cd->io_u_flight_nr++;
+
+		/*
+		 * FIO says:
+		 * If an engine has the commit hook it has to call io_u_queued() itself.
+		 */
+		io_u_queued(td, io_u);
+	}
+
+	/* FIO does not do this if an engine has the commit hook. */
+	io_u_mark_submit(td, cd->io_u_queued_nr);
+	cd->io_u_queued_nr = 0;
 
 	return 0;
 }
