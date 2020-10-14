@@ -227,6 +227,9 @@ static void client_cleanup(struct thread_data *td)
 	enum rpma_conn_event ev;
 	int ret;
 
+	if (cd == NULL)
+		return;
+
 	/* delete the iou's memory registration */
 	if ((ret = rpma_mr_dereg(&cd->orig_mr)))
 		rpma_td_verror(td, ret, "rpma_mr_dereg");
