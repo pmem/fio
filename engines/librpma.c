@@ -109,6 +109,8 @@ static int client_init(struct thread_data *td)
 		return 1;
 	}
 
+	td->io_ops_data = cd;
+
 	/* allocate all in-memory queues */
 	cd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
 	if (cd->io_us_queued == NULL) {
@@ -178,8 +180,6 @@ static int client_init(struct thread_data *td)
 	if ((ret = rpma_mr_remote_from_descriptor(&data->descriptors[0],
 			data->mr_desc_size, &cd->server_mr)))
 		goto err_conn_delete;
-
-	td->io_ops_data = cd;
 
 	return 0;
 
