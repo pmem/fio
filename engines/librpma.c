@@ -299,11 +299,16 @@ static int client_close_file(struct thread_data *td, struct fio_file *f)
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
-	/*
-	 * - add io_u to queued[] array
-	 */
+	struct client_data *cd = td->io_ops_data;
 
-	return FIO_Q_BUSY;
+	if (cd->io_u_queued_nr == (int)td->o.iodepth)
+		return FIO_Q_BUSY;
+
+	/* io_u -> queued[] */
+	cd->io_us_queued[cd->io_u_queued_nr] = io_u;
+	cd->io_u_queued_nr++;
+
+	return FIO_Q_QUEUED;
 }
 
 static int client_commit(struct thread_data *td)
