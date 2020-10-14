@@ -164,7 +164,7 @@ static int client_init(struct thread_data *td)
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
 		log_err(
-			"rpma_conn_next_event returned an unexptected event: %s\n",
+			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
 			rpma_utils_conn_event_2str(event));
 		goto err_conn_delete;
 	}
