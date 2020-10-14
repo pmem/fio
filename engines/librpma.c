@@ -308,10 +308,56 @@ static enum fio_q_status client_queue(struct thread_data *td,
 
 static int client_commit(struct thread_data *td)
 {
-	/*
-	 * - execute all io_us from queued[]
-	 * - move executed io_us to flight[]
-	 */
+	struct client_data *cd = td->io_ops_data;
+	struct io_u **io_us;
+	size_t src_offset;
+	size_t dst_offset;
+	int io_us_nr;
+	int flags;
+	int ret;
+	int i;
+
+	if (!cd->io_us_queued || cd->io_u_queued_nr == 0)
+		return 0;
+
+	io_us = cd->io_us_queued;
+	io_us_nr = cd->io_u_queued_nr;
+	flags = RPMA_F_COMPLETION_ON_ERROR;
+
+	/* execute all io_us from queued[] */
+	for (i = 0; i < io_us_nr; i++) {
+		struct io_u *io_u = io_us[i];
+
+		if (i == io_us_nr - 1)
+			flags = RPMA_F_COMPLETION_ALWAYS;
+
+		if (io_u->ddir == DDIR_READ) {
+			/* post an RDMA read operation */
+			dst_offset = (char *)(io_u->xfer_buf) - td->orig_buffer;
+			src_offset = io_u->offset;
+			ret = rpma_read(cd->conn,
+					cd->orig_mr, dst_offset,
+					cd->server_mr, src_offset,
+					io_u->xfer_buflen,
+					flags,
+					(void *)(uintptr_t)io_u->index);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_read");
+				return -1;
+			}
+
+			/* move executed io_us from queued[] to flight[] */
+			cd->io_us_flight[cd->io_u_flight_nr] = io_u;
+			cd->io_u_flight_nr++;
+			io_u_queued(td, io_u);
+		} else {
+			log_err("unsupported IO mode (%i)\n", io_u->ddir);
+			return -1;
+		}
+	}
+
+	io_u_mark_submit(td, io_us_nr);
+	cd->io_u_queued_nr = 0;
 
 	return 0;
 }
