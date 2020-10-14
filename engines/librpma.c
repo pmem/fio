@@ -306,14 +306,87 @@ static enum fio_q_status client_queue(struct thread_data *td,
 	return FIO_Q_BUSY;
 }
 
+static void client_td_io_us_flight_append(struct thread_data *td,
+		struct io_u **io_us, unsigned int nr)
+{
+	struct client_data *cd = td->io_ops_data;
+	int i;
+
+	for (i = 0; i < nr; i++) {
+		struct io_u *io_u = io_us[i];
+
+		/* queued -> flight */
+		cd->io_us_flight[cd->io_u_flight_nr] = io_u;
+		cd->io_u_flight_nr++;
+
+		io_u_queued(td, io_u);
+	}
+}
+
+static int client_execute(struct thread_data *td, struct io_u **io_us,
+				unsigned int nr)
+{
+	struct client_data *cd = td->io_ops_data;
+
+	enum fio_ddir ddir;
+	size_t src_offset;
+	size_t dst_offset;
+	unsigned int i;
+	int flags;
+	int ret;
+
+	flags = RPMA_F_COMPLETION_ON_ERROR;
+
+	for (i = 0; i < nr; i++) {
+		if (i == nr - 1)
+			flags = RPMA_F_COMPLETION_ALWAYS;
+
+		ddir = io_us[i]->ddir;
+		if (ddir == DDIR_READ) {
+			/* post an RDMA read operation */
+			dst_offset = (char *)(io_us[i]->xfer_buf) - td->orig_buffer;
+			src_offset = io_us[i]->offset;
+			ret = rpma_read(cd->conn,
+					cd->orig_mr, dst_offset,
+					cd->server_mr, src_offset,
+					io_us[i]->xfer_buflen,
+					flags,
+					&io_us[i]->index);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_read");
+				return -1;
+			}
+		}
+	}
+
+	return i;
+}
+
 static int client_commit(struct thread_data *td)
 {
-	/*
-	 * - execute all io_us from queued[]
-	 * - move executed io_us to flight[]
-	 */
+	struct client_data *cd = td->io_ops_data;
+	struct io_u **io_us;
+	int ret;
 
-	return 0;
+	if (!cd->io_us_queued)
+		return 0;
+
+	io_us = cd->io_us_queued;
+	while (cd->io_u_queued_nr) {
+		/* execute all io_us from queued[] */
+		ret = client_execute(td, io_us, cd->io_u_queued_nr);
+		if (ret <= 0)
+			break;
+
+		/* move executed io_us to flight[] */
+		client_td_io_us_flight_append(td, io_us, ret);
+		io_u_mark_submit(td, ret);
+		cd->io_u_queued_nr -= ret;
+		io_us += ret;
+		ret = 0;
+	}
+
+	return ret;
 }
 
 static int client_getevents(struct thread_data *td, unsigned int min,
