@@ -6,17 +6,21 @@ case "$TRAVIS_OS_NAME" in
     "linux")
 	# Architecture-dependent packages.
 	pkgs=(
-	    libaio-dev
 	    libcunit1-dev
-	    libfl-dev
 	    libgoogle-perftools-dev
 	    libibverbs-dev
-	    libiscsi-dev
 	    libnuma-dev
-	    librbd-dev
 	    librdmacm-dev
-	    libz-dev
 	)
+	if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then
+		pkgs+=(
+		    libaio-dev
+		    libfl-dev
+		    libiscsi-dev
+		    librbd-dev
+		    libz-dev
+	        )
+	fi
 	case "$CI_TARGET_ARCH" in
 	    "x86")
 		pkgs=("${pkgs[@]/%/:i386}")
@@ -26,10 +30,10 @@ case "$TRAVIS_OS_NAME" in
 	        )
 		;;
 	    "amd64")
-		pkgs+=(nvidia-cuda-dev)
+		[ "$TRAVIS_EVENT_TYPE" == "cron" ] && pkgs+=(nvidia-cuda-dev)
 		;;
 	esac
-	if [[ $CI_TARGET_ARCH != "x86" ]]; then
+	if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]] && [[ $CI_TARGET_ARCH != "x86" ]]; then
 		pkgs+=(glusterfs-common)
 	fi
 	# Architecture-independent packages and packages for which we don't
