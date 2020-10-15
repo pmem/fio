@@ -10,7 +10,7 @@ arch:
   - arm64
 env:
   global:
-    - MAKEFLAGS="-j 2"
+    - MAKEFLAGS="-j$(nproc)"
 matrix:
   include:
     - os: linux
