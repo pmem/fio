@@ -438,13 +438,10 @@ static int client_commit(struct thread_data *td)
 	return 0;
 }
 
-/*
- * XXX current implementation ignores provided min and max
- */
-static int client_getevents(struct thread_data *td, unsigned int min,
-				unsigned int max, const struct timespec *t)
+static int client_getevent_process(struct thread_data *td)
 {
 	struct client_data *cd = td->io_ops_data;
+	bool cmpl_expected = false; /* in the beginning, may be no completions */
 	struct rpma_completion cmpl;
 	unsigned int io_us_error = 0;
 	/* io_u->index of completed io_u (cmpl.op_context) */
@@ -456,17 +453,39 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 	int i;
 	int ret;
 
-	/* wait for a completion */
-	if ((ret = rpma_conn_completion_wait(cd->conn))) {
-		rpma_td_verror(td, ret, "rpma_conn_completion_wait");
-		return -1;
-	}
+	do {
+		/* get a completion */
+		ret = rpma_conn_completion_get(cd->conn, &cmpl);
 
-	/* get the completion */
-	if ((ret = rpma_conn_completion_get(cd->conn, &cmpl))) {
-		rpma_td_verror(td, ret, "rpma_conn_completion_get");
-		return -1;
-	}
+		/* we have a completion, no waiting needed */
+		if (ret == 0) {
+			break;
+		} else if (ret != RPMA_E_NO_COMPLETION) {
+			/* an error occurred */
+			rpma_td_verror(td, ret, "rpma_conn_completion_get");
+			return -1;
+		}
+
+		if (cmpl_expected) {
+			td_vmsg(td, -1,
+				"rpma_conn_completion_wait() succeeded but rpma_conn_completion_get() returned no completion",
+				"client_getevent_process");
+			return -1;
+		}
+
+		/* no completion, we have to wait for it */
+		ret = rpma_conn_completion_wait(cd->conn);
+		if (ret != 0) {
+			/* lack of completions is not an error */
+			if (ret  != RPMA_E_NO_COMPLETION)
+				rpma_td_verror(td, ret, "rpma_conn_completion_wait");
+
+			return -1;
+		}
+
+		/* waiting succeeded so a completion is expected */
+		cmpl_expected = true;
+	} while (1);
 
 	/* if io_us has completed with an error */
 	if (cmpl.op_status != IBV_WC_SUCCESS)
@@ -486,7 +505,7 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 		log_err(
 			"no matching io_u for received completion found (io_u_index=%u)\n",
 			io_u_index);
-		return -1;
+		return INT_MIN;
 	}
 
 	/* move completed io_us to the completed in-memory queue */
@@ -506,6 +525,35 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 	cd->io_u_flight_nr -= cmpl_num;
 
 	return cmpl_num;
+}
+
+static int client_getevents(struct thread_data *td, unsigned int min,
+				unsigned int max, const struct timespec *t)
+{
+	/* total # of completed io_us */
+	int cmpl_num_total = 0;
+	/* # of completed io_us from a single event */
+	int cmpl_num;
+
+	/* consume all ready completions */
+	do {
+		cmpl_num = client_getevent_process(td);
+		if (cmpl_num > 0) {
+			/* new completions collected */
+			cmpl_num_total += cmpl_num;
+		}
+		else if (cmpl_num == RPMA_E_NO_COMPLETION) {
+			/* no new completions but min threshold exceeded */
+			if (cmpl_num_total >= min)
+				break;
+		}
+		else if (cmpl_num != RPMA_E_NO_COMPLETION) {
+			/* an error occurred */
+			return -1;
+		}
+	} while (cmpl_num_total < max);
+
+	return cmpl_num_total;
 }
 
 static struct io_u *client_event(struct thread_data *td, int event)
