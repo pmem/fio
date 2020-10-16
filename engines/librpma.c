@@ -76,7 +76,10 @@ struct client_data {
 	struct rpma_peer *peer;
 	struct rpma_conn *conn;
 
-	/* ious's base address memory registration (td->orig_buffer) */
+	/* aligned td->orig_buffer */
+	char *orig_buffer_aligned;
+
+	/* ious's base address memory registration (cd->orig_buffer_aligned) */
 	struct rpma_mr_local *orig_mr;
 
 	/* a server's memory representation */
@@ -211,9 +214,24 @@ err_free_cd:
 static int client_post_init(struct thread_data *td)
 {
 	struct client_data *cd =  td->io_ops_data;
+	size_t io_us_size;
 	int ret;
 
-	if ((ret = rpma_mr_reg(cd->peer, td->orig_buffer, td->orig_buffer_size,
+	/*
+	 * td->orig_buffer is not aligned. The engine requires aligned io_us
+	 * so FIO alignes up the address using the formula below.
+	 */
+	cd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
+			td->o.mem_align;
+
+	/*
+	 * td->orig_buffer_size beside the space really consumed by io_us
+	 * has paddings which can be omitted for the memory registration.
+	 */
+	io_us_size = (unsigned long long)td_max_bs(td) *
+			(unsigned long long)td->o.iodepth;
+
+	if ((ret = rpma_mr_reg(cd->peer, cd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
 			&cd->orig_mr)))
@@ -335,7 +353,7 @@ static int client_commit(struct thread_data *td)
 
 		if (io_u->ddir == DDIR_READ) {
 			/* post an RDMA read operation */
-			size_t dst_offset = (char *)(io_u->xfer_buf) - td->orig_buffer;
+			size_t dst_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
 			size_t src_offset = io_u->offset;
 			ret = rpma_read(cd->conn,
 					cd->orig_mr, dst_offset,
