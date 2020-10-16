@@ -439,10 +439,12 @@ static int client_commit(struct thread_data *td)
 }
 
 /*
- * XXX current implementation ignores provided min and max
+ * RETURN VALUE
+ * A positive non-zero value indicating the number of completed operations. Or:
+ * -   0  - when no complications found
+ * - (-1) - when an error occurred
  */
-static int client_getevents(struct thread_data *td, unsigned int min,
-				unsigned int max, const struct timespec *t)
+static int client_getevent_process(struct thread_data *td)
 {
 	struct client_data *cd = td->io_ops_data;
 	struct rpma_completion cmpl;
@@ -456,14 +458,16 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 	int i;
 	int ret;
 
-	/* wait for a completion */
-	if ((ret = rpma_conn_completion_wait(cd->conn))) {
-		rpma_td_verror(td, ret, "rpma_conn_completion_wait");
-		return -1;
-	}
+	/* get a completion */
+	ret = rpma_conn_completion_get(cd->conn, &cmpl);
 
-	/* get the completion */
-	if ((ret = rpma_conn_completion_get(cd->conn, &cmpl))) {
+	/* we have a completion, no waiting needed */
+	if (ret != 0) {
+		/* lack of completion is not an error */
+		if (ret == RPMA_E_NO_COMPLETION)
+			return 0;
+
+		/* an error occurred */
 		rpma_td_verror(td, ret, "rpma_conn_completion_get");
 		return -1;
 	}
@@ -506,6 +510,44 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 	cd->io_u_flight_nr -= cmpl_num;
 
 	return cmpl_num;
+}
+
+static int client_getevents(struct thread_data *td, unsigned int min,
+				unsigned int max, const struct timespec *t)
+{
+	struct client_data *cd = td->io_ops_data;
+	/* total # of completed io_us */
+	int cmpl_num_total = 0;
+	/* # of completed io_us from a single event */
+	int cmpl_num;
+	int ret;
+
+	do {
+		cmpl_num = client_getevent_process(td);
+		if (cmpl_num > 0) {
+			/* new completions collected */
+			cmpl_num_total += cmpl_num;
+		}
+		else if (cmpl_num == 0) {
+			if (cmpl_num_total >= min)
+				break;
+
+			/* too few completions - wait */
+			ret = rpma_conn_completion_wait(cd->conn);
+			if (ret == 0 || ret == RPMA_E_NO_COMPLETION)
+				continue;
+
+			/* an error occurred */
+			rpma_td_verror(td, ret, "rpma_conn_completion_wait");
+			return -1;
+		}
+		else {
+			/* an error occurred */
+			return -1;
+		}
+	} while (cmpl_num_total < max);
+
+	return cmpl_num_total;
 }
 
 static struct io_u *client_event(struct thread_data *td, int event)
