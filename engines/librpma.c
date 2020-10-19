@@ -99,10 +99,12 @@ static int client_init(struct thread_data *td)
 	struct client_options *o = td->eo;
 	struct client_data *cd;
 	struct ibv_context *dev = NULL;
+	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	struct rpma_conn_private_data pdata;
 	struct example_common_data *data;
+	uint32_t cq_size;
 	int ret = 1;
 
 	/* allocate client's data */
@@ -140,17 +142,46 @@ static int client_init(struct thread_data *td)
 		goto err_free_io_us_completed;
 	}
 
+	ret = rpma_conn_cfg_new(&cfg);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		goto err_free_io_us_completed;
+	}
+
+	ret = rpma_conn_cfg_set_sq_size(cfg, td->o.iodepth);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		goto err_cfg_delete;
+	}
+
+	/* cq_size = ceil(td->o.iodepth / td->o.iodepth_batch) */
+	cq_size = (td->o.iodepth % td->o.iodepth_batch) ?
+			(td->o.iodepth / td->o.iodepth_batch) + 1 :
+			(td->o.iodepth / td->o.iodepth_batch);
+
+	ret = rpma_conn_cfg_set_cq_size(cfg, cq_size);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		goto err_cfg_delete;
+	}
+
 	/* create a new peer object */
 	ret = rpma_peer_new(dev, &cd->peer);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_peer_new");
-		goto err_free_io_us_completed;
+		goto err_cfg_delete;
 	}
 
 	/* create a connection request */
-	ret = rpma_conn_req_new(cd->peer, o->hostname, o->port, NULL, &req);
+	ret = rpma_conn_req_new(cd->peer, o->hostname, o->port, cfg, &req);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_req_new");
+		goto err_peer_delete;
+	}
+
+	ret = rpma_conn_cfg_delete(&cfg);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		goto err_peer_delete;
 	}
 
@@ -195,6 +226,9 @@ err_req_delete:
                 (void) rpma_conn_req_delete(&req);
 err_peer_delete:
         (void) rpma_peer_delete(&cd->peer);
+
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(&cfg);
 
 err_free_io_us_completed:
 	free(cd->io_us_completed);
