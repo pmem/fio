@@ -17,6 +17,7 @@
 #include "../hash.h"
 #include "../optgroup.h"
 
+#include <libpmem.h>
 #include <librpma.h>
 
 #define rpma_td_verror(td, err, func) \
