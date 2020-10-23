@@ -226,10 +226,10 @@ err_conn_delete:
 	(void) rpma_conn_delete(&cd->conn);
 
 err_req_delete:
-        if (req)
-                (void) rpma_conn_req_delete(&req);
+	if (req)
+		(void) rpma_conn_req_delete(&req);
 err_peer_delete:
-        (void) rpma_peer_delete(&cd->peer);
+	(void) rpma_peer_delete(&cd->peer);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
