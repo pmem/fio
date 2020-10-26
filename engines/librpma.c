@@ -355,6 +355,73 @@ static int client_close_file(struct thread_data *td, struct fio_file *f)
 	return 0;
 }
 
+static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int flags)
+{
+	struct client_data *cd = td->io_ops_data;
+	size_t dst_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+	size_t src_offset = io_u->offset;
+	int ret = rpma_read(cd->conn,
+			cd->orig_mr, dst_offset,
+			cd->server_mr, src_offset,
+			io_u->xfer_buflen,
+			flags,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_read");
+		return -1;
+	}
+
+	return 0;
+}
+
+static enum fio_q_status client_queue_sync(struct thread_data *td,
+					  struct io_u *io_u)
+{
+	struct client_data *cd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	/* io_u->index of completed io_u (cmpl.op_context) */
+	unsigned int io_u_index;
+	int ret;
+
+	/* execute io_us */
+	if (io_u->ddir == DDIR_READ) {
+		/* post an RDMA read operation */
+		if ((ret = client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS)))
+			goto err;
+	} else {
+		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
+		goto err;
+	}
+
+	do {
+		/* get a completion */
+		ret = rpma_conn_completion_get(cd->conn, &cmpl);
+		if (ret != 0 && ret != RPMA_E_NO_COMPLETION) {
+			/* an error occurred */
+			rpma_td_verror(td, ret, "rpma_conn_completion_get");
+			goto err;
+		}
+	} while (ret != 0);
+
+	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
+	if (io_u->index != io_u_index) {
+		log_err(
+			"no matching io_u for received completion found (io_u_index=%u)\n",
+			io_u_index);
+		goto err;
+	}
+
+	/* if io_u has completed with an error */
+	if (cmpl.op_status != IBV_WC_SUCCESS)
+		io_u->error = cmpl.op_status;
+
+	return FIO_Q_COMPLETED;
+
+err:
+	io_u->error = -1;
+	return FIO_Q_COMPLETED;
+}
+
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
@@ -362,6 +429,9 @@ static enum fio_q_status client_queue(struct thread_data *td,
 
 	if (cd->io_u_queued_nr == (int)td->o.iodepth)
 		return FIO_Q_BUSY;
+
+	if (td->o.sync_io)
+		return client_queue_sync(td, io_u);
 
 	/* io_u -> queued[] */
 	cd->io_us_queued[cd->io_u_queued_nr] = io_u;
@@ -391,18 +461,8 @@ static int client_commit(struct thread_data *td)
 
 		if (io_u->ddir == DDIR_READ) {
 			/* post an RDMA read operation */
-			size_t dst_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-			size_t src_offset = io_u->offset;
-			ret = rpma_read(cd->conn,
-					cd->orig_mr, dst_offset,
-					cd->server_mr, src_offset,
-					io_u->xfer_buflen,
-					flags,
-					(void *)(uintptr_t)io_u->index);
-			if (ret) {
-				rpma_td_verror(td, ret, "rpma_read");
+			if ((ret = client_io_read(td, io_u, flags)))
 				return -1;
-			}
 		} else {
 			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
 			return -1;
