@@ -49,6 +49,9 @@ case "$TRAVIS_OS_NAME" in
 	sudo apt-get install --no-install-recommends -qq -y "${pkgs[@]}"
 	# librpma is supported on the amd64 (x86_64) architecture for now
 	if [[ $CI_TARGET_ARCH == "amd64" ]]; then
+		# PMDK libraries have to be installed, because
+		# libpmem is a dependency of the librpma fio engine
+		ci/travis-install-pmdk.sh
 		# install librpma from sources from GitHub
 		ci/travis-install-librpma.sh
 	fi
