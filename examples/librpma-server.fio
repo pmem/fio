@@ -16,6 +16,7 @@ thread
 
 [server]
 create_serialize=0
+iomem_align=[page size]
+num_conns=[total # of connections]
+size=[size of workspace for a single connection]
 filename=[XXX device dax or an existing fsdax file]
-size=[XXX size]
-mem_align=[XXX memory alignment of the I/O memory buffers]
