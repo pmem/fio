@@ -699,60 +699,234 @@ static struct fio_option fio_server_options[] = {
 
 struct server_data {
 	struct rpma_peer *peer;
+	struct rpma_ep *ep;
+
+	/* aligned td->orig_buffer */
+	char *orig_buffer_aligned;
+
+	struct example_common_data data;
+	struct rpma_conn_private_data pdata;
 };
 
 static int server_init(struct thread_data *td)
 {
 	struct server_options *o = td->eo;
-	(void) o; /* XXX delete when o will be used */
+	struct server_data *sd;
+	struct ibv_context *dev = NULL;
+	int ret = 1;
 
-	/*
-	 * - allocate server's data
-	 * - find ibv_context using o->bindname
-	 * - create new peer and endpoint (o->bindname and o->port)
-	 */
+	/* configure logging thresholds to see more details */
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_ERROR);
+
+	/* allocate server's data */
+	sd = calloc(1, sizeof(struct server_data));
+	if (sd == NULL) {
+		td_verror(td, errno, "calloc");
+		return 1;
+	}
+
+	/* obtain an IBV context for a remote IP address */
+	ret = rpma_utils_get_ibv_context(o->bindname,
+				RPMA_UTIL_IBV_CONTEXT_LOCAL,
+				&dev);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		goto err_free_sd;
+	}
+
+	/* create a new peer object */
+	ret = rpma_peer_new(dev, &sd->peer);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_peer_new");
+		goto err_free_sd;
+	}
+
+	/* start a listening endpoint at addr:port */
+	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &sd->ep);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_listen");
+		goto err_peer_delete;
+	}
+
+	td->io_ops_data = sd;
 
 	return 0;
+
+err_peer_delete:
+	(void) rpma_peer_delete(&sd->peer);
+
+err_free_sd:
+	free(sd);
+
+	return ret;
 }
 
 static void server_cleanup(struct thread_data *td)
 {
-	/*
-	 * - shutdown ep
-	 * - free peer
-	 */
+	struct server_data *sd =  td->io_ops_data;
+	int ret;
+
+	if (sd == NULL)
+		return;
+
+	/* shutdown the endpoint */
+	if ((ret = rpma_ep_shutdown(&sd->ep)))
+		rpma_td_verror(td, ret, "rpma_ep_shutdown");
+
+	/* free the peer */
+	if ((ret = rpma_peer_delete(&sd->peer)))
+		rpma_td_verror(td, ret, "rpma_peer_delete");
 }
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
+	struct server_data *sd =  td->io_ops_data;
+	struct rpma_mr_local *mr;
+	size_t mr_desc_size;
+	size_t io_us_size;
+	int ret = 1;
+
 	/*
-	 * - pmem_map_file
-	 * - rpma_mr_reg -> f->engine_data
+	 * td->orig_buffer is not aligned. The engine requires aligned io_us
+	 * so FIO alignes up the address using the formula below.
 	 */
+	sd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
+			td->o.mem_align;
+
+	/*
+	 * td->orig_buffer_size beside the space really consumed by io_us
+	 * has paddings which can be omitted for the memory registration.
+	 */
+	io_us_size = (unsigned long long)td_max_bs(td) *
+			(unsigned long long)td->o.iodepth;
+
+	ret = rpma_mr_reg(sd->peer, sd->orig_buffer_aligned, io_us_size,
+			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
+			&mr);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_mr_reg");
+		return 1;
+	}
+
+	/* get size of the memory region's descriptor */
+	ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_mr_get_descriptor_size");
+		goto err_mr_dereg;
+	}
+
+	/* verify size of the memory region's descriptor */
+	if (mr_desc_size > DESCRIPTORS_MAX_SIZE) {
+		log_err("size of the memory region's descriptor is too big (max=%i)\n",
+			DESCRIPTORS_MAX_SIZE);
+		goto err_mr_dereg;
+	}
+
+	/* get the memory region's descriptor */
+	ret = rpma_mr_get_descriptor(mr, &sd->data.descriptors[0]);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_mr_get_descriptor");
+		goto err_mr_dereg;
+	}
+
+	sd->data.data_offset = 0;
+	sd->data.mr_desc_size = mr_desc_size;
+
+	sd->pdata.ptr = &sd->data;
+	sd->pdata.len = sizeof(struct example_common_data);
+
+	FILE_SET_ENG_DATA(f, mr);
 
 	return 0;
+
+err_mr_dereg:
+	(void) rpma_mr_dereg(&mr);
+
+	return ret;
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	/*
-	 * - rpma_mr_dereg
-	 * - pmem_unmap
-	 */
+	struct rpma_mr_local *mr = FILE_ENG_DATA(f);
+	int ret;
 
-	return 0;
+	if ((ret = rpma_mr_dereg(&mr)))
+		rpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	FILE_SET_ENG_DATA(f, NULL);
+
+	return ret;
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
-	/*
-	 * - XXX make sure it is called only once!
-	 * - accept a single connection
-	 * - wait for the connection to close and cleanup
-	 */
+	struct server_data *sd =  td->io_ops_data;
+	struct rpma_conn_req *req = NULL;
+	struct rpma_conn *conn;
+	enum rpma_conn_event event = RPMA_CONN_UNDEFINED;
+	int ret;
 
-	return FIO_Q_BUSY;
+	/* receive an incoming connection request */
+	ret = rpma_ep_next_conn_req(sd->ep, NULL, &req);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_next_conn_req");
+		return FIO_Q_COMPLETED;
+	}
+
+	/* accept the connection request and obtain the connection object */
+	ret = rpma_conn_req_connect(&req, &sd->pdata, &conn);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_req_connect");
+		goto err_req_delete;
+	}
+
+	/* wait for the connection to be established */
+	ret = rpma_conn_next_event(conn, &event);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
+		goto err_conn_delete;
+	}
+	if (event != RPMA_CONN_ESTABLISHED) {
+		log_err(
+			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
+			rpma_utils_conn_event_2str(event));
+		goto err_conn_delete;
+	}
+
+	/* wait for the connection to be closed */
+	ret = rpma_conn_next_event(conn, &event);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
+		goto err_conn_delete;
+	}
+	if (event != RPMA_CONN_CLOSED) {
+		log_err(
+			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_CLOSED)\n",
+			rpma_utils_conn_event_2str(event));
+		goto err_conn_delete;
+	}
+
+	td->done = 1;
+
+	(void) rpma_conn_disconnect(conn);
+	(void) rpma_conn_delete(&conn);
+
+	return FIO_Q_COMPLETED;
+
+err_conn_delete:
+	(void) rpma_conn_disconnect(conn);
+	(void) rpma_conn_delete(&conn);
+
+err_req_delete:
+	if (req)
+		(void) rpma_conn_req_delete(&req);
+
+	td->terminate = 1;
+
+	return FIO_Q_COMPLETED;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_server = {
@@ -763,8 +937,9 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.close_file		= server_close_file,
 	.queue			= server_queue,
 	.cleanup		= server_cleanup,
+	/* XXX FIO_DISKLESSIO should be removed when pmem_map_file() will be added */
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
-				  FIO_NOSTATS,
+				  FIO_NOSTATS | FIO_DISKLESSIO,
 	.options		= fio_server_options,
 	.option_struct_size	= sizeof(struct server_options),
 };
