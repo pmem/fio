@@ -706,6 +706,11 @@ struct server_data {
 
 	struct example_common_data data;
 	struct rpma_conn_private_data pdata;
+
+	/* memory allocated with iomem_alloc() is persistent */
+	int is_pmem;
+	/* size of the mapped persistent memory */
+	size_t size_pmem;
 };
 
 static int server_init(struct thread_data *td)
@@ -929,6 +934,93 @@ err_req_delete:
 	return FIO_Q_COMPLETED;
 }
 
+/*
+ * alloc_aligned -- allocate an aligned chunk of memory
+ */
+static int alloc_aligned(struct thread_data *td, size_t size)
+{
+	void *mem = NULL;
+
+	long pagesize = sysconf(_SC_PAGESIZE);
+	if (pagesize < 0) {
+		td_verror(td, errno, "sysconf");
+		return 1;
+	}
+
+	/* allocate a page size aligned local memory pool */
+	errno = posix_memalign(&mem, (size_t)pagesize, size);
+	if (errno) {
+		td_verror(td, errno, "posix_memalign");
+		return 1;
+	}
+
+	td->orig_buffer = mem;
+
+	dprint(FD_MEM, "alloc_aligned %llu %p\n",
+		(unsigned long long) size, td->orig_buffer);
+
+	return td->orig_buffer == NULL;
+}
+
+static int alloc_pmem_map_file(struct thread_data *td, size_t size)
+{
+	struct server_data *sd =  td->io_ops_data;
+	size_t size_pmem = 0;
+	void *mem = NULL;
+	int is_pmem = 0;
+
+	/* map the file */
+	mem = pmem_map_file(td->o.filename, 0 /* len */, 0 /* flags */,
+			0 /* mode */, &size_pmem, &is_pmem);
+	if (mem == NULL) {
+		log_err("fio: pmem_map_file(%s) failed\n", td->o.filename);
+		/* pmem_map_file() sets errno on failure */
+		td_verror(td, errno, "pmem_map_file");
+		return 1;
+	}
+
+	/* pmem is expected */
+	if (!is_pmem) {
+		log_err("fio: %s is not located in persistent memory\n", td->o.filename);
+		(void) pmem_unmap(mem, size_pmem);
+		return 1;
+	}
+
+	sd->is_pmem = 1;
+	sd->size_pmem = size_pmem;
+	td->orig_buffer = mem;
+
+	dprint(FD_MEM, "alloc_pmem_map_file %llu %p\n",
+		(unsigned long long) size, td->orig_buffer);
+
+	return td->orig_buffer == NULL;
+}
+
+static int server_iomem_alloc(struct thread_data *td, size_t size)
+{
+	struct server_data *sd =  td->io_ops_data;
+
+	sd->is_pmem = 0;
+	sd->size_pmem = 0;
+
+	if (alloc_pmem_map_file(td, size)) {
+		log_info("fio: allocating memory using posix_memalign()\n");
+		return alloc_aligned(td, size);
+	}
+
+	return 0;
+}
+
+static void server_iomem_free(struct thread_data *td)
+{
+	struct server_data *sd =  td->io_ops_data;
+
+	if (sd->is_pmem)
+		(void) pmem_unmap(td->orig_buffer, sd->size_pmem);
+	else
+		free(td->orig_buffer);
+}
+
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_server",
 	.version		= FIO_IOOPS_VERSION,
@@ -937,9 +1029,10 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.close_file		= server_close_file,
 	.queue			= server_queue,
 	.cleanup		= server_cleanup,
-	/* XXX FIO_DISKLESSIO should be removed when pmem_map_file() will be added */
+	.iomem_alloc		= server_iomem_alloc,
+	.iomem_free		= server_iomem_free,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
-				  FIO_NOSTATS | FIO_DISKLESSIO,
+				  FIO_NOSTATS,
 	.options		= fio_server_options,
 	.option_struct_size	= sizeof(struct server_options),
 };
