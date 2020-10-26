@@ -669,6 +669,7 @@ struct server_options {
 	void *pad;
 	char *bindname;
 	char *port;
+	unsigned int num_conns;
 };
 
 static struct fio_option fio_server_options[] = {
@@ -689,6 +690,17 @@ static struct fio_option fio_server_options[] = {
 		.off1	= offsetof(struct server_options, port),
 		.help	= "port to listen on for incoming connections",
 		.def    = "7204",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= "num_conns",
+		.lname	= "Number of connections",
+		.type	= FIO_OPT_INT,
+		.off1	= offsetof(struct server_options, num_conns),
+		.help	= "Number of connections to serve",
+		.minval = 1,
+		.def	= "1",
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_LIBRPMA,
 	},
@@ -750,6 +762,18 @@ static int server_init(struct thread_data *td)
 	}
 
 	td->io_ops_data = sd;
+
+	/*
+	 * Each connection needs its own workspace which will be allocated as
+	 * io_u. So the number of io_us has to be equal to the number of
+	 * connections the server will handle and...
+	 */
+	td->o.iodepth = o->num_conns;
+
+	/*
+	 * ... a single io_u size has to be equal to the assumed workspace size.
+	 */
+	td->o.max_bs[DDIR_READ] = td->o.size;
 
 	return 0;
 
@@ -860,11 +884,10 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 	return ret;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					  struct io_u *io_u)
+static struct rpma_conn *server_conn_init(struct thread_data *td)
 {
 	struct server_data *sd =  td->io_ops_data;
-	struct rpma_conn_req *req = NULL;
+	struct rpma_conn_req *req;
 	struct rpma_conn *conn;
 	enum rpma_conn_event event = RPMA_CONN_UNDEFINED;
 	int ret;
@@ -873,14 +896,15 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	ret = rpma_ep_next_conn_req(sd->ep, NULL, &req);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_ep_next_conn_req");
-		return FIO_Q_COMPLETED;
+		return NULL;
 	}
 
 	/* accept the connection request and obtain the connection object */
 	ret = rpma_conn_req_connect(&req, &sd->pdata, &conn);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_req_connect");
-		goto err_req_delete;
+		(void) rpma_conn_req_delete(&req);
+		return NULL;
 	}
 
 	/* wait for the connection to be established */
@@ -896,35 +920,84 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		goto err_conn_delete;
 	}
 
-	/* wait for the connection to be closed */
-	ret = rpma_conn_next_event(conn, &event);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_next_event");
-		goto err_conn_delete;
-	}
-	if (event != RPMA_CONN_CLOSED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_CLOSED)\n",
-			rpma_utils_conn_event_2str(event));
-		goto err_conn_delete;
-	}
-
-	td->done = 1;
-
-	(void) rpma_conn_disconnect(conn);
-	(void) rpma_conn_delete(&conn);
-
-	return FIO_Q_COMPLETED;
+	return conn;
 
 err_conn_delete:
 	(void) rpma_conn_disconnect(conn);
 	(void) rpma_conn_delete(&conn);
 
-err_req_delete:
-	if (req)
-		(void) rpma_conn_req_delete(&req);
+	return NULL;
+}
 
-	td->terminate = 1;
+static void server_conn_cleanup(struct thread_data *td, struct rpma_conn *conn)
+{
+	enum rpma_conn_event event = RPMA_CONN_UNDEFINED;
+	int ret;
+
+	/* wait for the connection to be closed */
+	ret = rpma_conn_next_event(conn, &event);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
+		goto conn_delete;
+	}
+	if (event != RPMA_CONN_CLOSED) {
+		log_err(
+			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_CLOSED)\n",
+			rpma_utils_conn_event_2str(event));
+	}
+
+conn_delete:
+	(void) rpma_conn_disconnect(conn);
+	(void) rpma_conn_delete(&conn);
+}
+
+static enum fio_q_status server_queue(struct thread_data *td,
+					  struct io_u *io_u)
+{
+	struct server_options *o = td->eo;
+	struct server_data *sd =  td->io_ops_data;
+	struct rpma_conn **conns;
+	size_t bs = td_max_bs(td);
+	int i;
+
+	/* prepare space for connection objects */
+	conns = calloc(o->num_conns, sizeof(struct rpma_conn *));
+	if (conns == NULL) {
+		td->terminate = true;
+		return FIO_Q_COMPLETED;
+	}
+
+	/* establish all connections */
+	for (i = 0; i < o->num_conns; ++i) {
+		conns[i] = server_conn_init(td);
+		if (conns[i] == NULL) {
+			td->terminate = true;
+			break;
+		}
+
+		/* an overflow guard */
+		if (sd->data.data_offset + bs < sd->data.data_offset) {
+			td_vmsg(td, EOVERFLOW,
+				"example_common_data.data_offset too small to describe connection's workspace offset",
+				"server_queue");
+		}
+
+		/* move another connection to the next workspace */
+		sd->data.data_offset += bs;
+	}
+
+	/* close all connections */
+	for (i = 0; i < o->num_conns && conns[i] != NULL; ++i) {
+		server_conn_cleanup(td, conns[i]);
+		conns[i] = NULL;
+	}
+
+	/* free space after connection objects */
+	free(conns);
+
+	/* if the thread didn't fail the job is done */
+	if (!td->terminate)
+		td->done = true;
 
 	return FIO_Q_COMPLETED;
 }
