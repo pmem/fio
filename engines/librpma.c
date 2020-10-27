@@ -375,6 +375,25 @@ static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int 
 	return 0;
 }
 
+static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int flags)
+{
+	struct client_data *cd = td->io_ops_data;
+	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+	size_t dst_offset = io_u->offset;
+	int ret = rpma_write(cd->conn,
+			cd->server_mr, dst_offset,
+			cd->orig_mr, src_offset,
+			io_u->xfer_buflen,
+			flags,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_write");
+		return -1;
+	}
+
+	return 0;
+}
+
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
@@ -388,6 +407,15 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	if (io_u->ddir == DDIR_READ) {
 		/* post an RDMA read operation */
 		if ((ret = client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS)))
+			goto err;
+	} else if (io_u->ddir == DDIR_WRITE) {
+		/* post an RDMA write operation */
+		if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
+			goto err;
+		if ((ret = rpma_flush(cd->conn, cd->server_mr,
+				io_u->offset, 0 /* XXX length of the sequence */,
+				RPMA_FLUSH_TYPE_VISIBILITY, RPMA_F_COMPLETION_ALWAYS,
+				(void *)(uintptr_t)io_u->index)))
 			goto err;
 	} else {
 		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
