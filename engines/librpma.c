@@ -124,6 +124,12 @@ static int client_init(struct thread_data *td)
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_ERROR);
 
+	/* XXX not supported readwrite= rw/randwrite/randrw */
+	if (td_random(td) || td_rw(td)) {
+		log_err("Not supported mode. ");
+		return 1;
+	}
+
 	/* allocate client's data */
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
@@ -170,14 +176,16 @@ static int client_init(struct thread_data *td)
 	if (td_write(td)) {
 		if (td->o.sync_io)
 			sq_size = 2; /* WRITE + FLUSH */
-		else
-			/* XXX - need to improve with the implementation of the asynchronous write */
-			sq_size = td->o.iodepth_batch + 1; /* N x WRITE + FLUSH */
+		else {
+			/* N x WRITE + number of FLUSH per batch */
+			sq_size = td->o.iodepth +
+				td->o.iodepth / td->o.iodepth_batch + 1;
+		}
 	} else {
 		if (td->o.sync_io)
 			sq_size = 1; /* READ */
 		else
-			sq_size = td->o.iodepth /* N x READ */
+			sq_size = td->o.iodepth; /* N x READ */
 	}
 	ret = rpma_conn_cfg_set_sq_size(cfg, sq_size);
 	if (ret) {
@@ -563,6 +571,7 @@ static int client_commit(struct thread_data *td)
 	bool fill_time;
 	int ret;
 	int i;
+	unsigned long long flush_len = 0;
 
 	if (!cd->io_us_queued)
 		return -1;
@@ -571,13 +580,37 @@ static int client_commit(struct thread_data *td)
 	for (i = 0; i < cd->io_u_queued_nr; i++) {
 		struct io_u *io_u = cd->io_us_queued[i];
 
-		if (i == cd->io_u_queued_nr - 1)
-			flags = RPMA_F_COMPLETION_ALWAYS;
-
 		if (io_u->ddir == DDIR_READ) {
+			if (i == cd->io_u_queued_nr - 1)
+				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
 			if ((ret = client_io_read(td, io_u, flags)))
 				return -1;
+		} else if (io_u->ddir == DDIR_WRITE) {
+/*
+ * XXX this implementation works only for readwrite=read,write
+ * - to support readwrite=rw it has to consider interlaced sequences
+ *   of reads and writes
+ * - to support readwrite=randwrite,randrw it has to consider
+ *   flush_len for nonadjacent writes
+ */
+			/* post an RDMA write operation */
+			if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
+				return -1;
+
+			flush_len += io_u->xfer_buflen;
+
+			if (i < cd->io_u_queued_nr - 1)
+				continue;
+
+			ret = rpma_flush(cd->conn, cd->server_mr,
+				io_u->offset, flush_len,
+				cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
+				(void *)(uintptr_t)io_u->index);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_flush");
+				return -1;
+			}
 		} else {
 			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
 			return -1;
