@@ -25,13 +25,16 @@
 
 /* client's and server's common */
 
-/* XXX a private data structure borrowed from RPMA examples */
-#define DESCRIPTORS_MAX_SIZE 24
-struct example_common_data {
-	uint16_t data_offset;	/* user data offset */
+/*
+ * Limited by the maximum length of the private data
+ * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
+ */
+#define DESCRIPTORS_MAX_SIZE 23
+
+struct workspace {
+	uint32_t size;		/* size of workspace for a single connection */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
-	uint8_t pcfg_desc_size;	/* size of pcfg_desc in descriptors[] */
-	/* buffer containing mr_desc and pcfg_desc */
+	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
 };
 
@@ -86,6 +89,10 @@ struct client_data {
 	/* a server's memory representation */
 	struct rpma_mr_remote *server_mr;
 
+	/* remote workspace description */
+	size_t ws_offset;
+	size_t ws_size;
+
 	/* in-memory queues */
 	struct io_u **io_us_queued;
 	int io_u_queued_nr;
@@ -104,9 +111,10 @@ static int client_init(struct thread_data *td)
 	struct rpma_conn_req *req = NULL;
 	struct rpma_peer_cfg *pcfg = NULL;
 	enum rpma_conn_event event;
-	struct rpma_conn_private_data pdata;
-	struct example_common_data *data;
 	uint32_t cq_size;
+	struct rpma_conn_private_data pdata;
+	struct workspace *ws;
+	size_t server_mr_size;
 	int ret = 1;
 
 	/* configure logging thresholds to see more details */
@@ -217,11 +225,40 @@ static int client_init(struct thread_data *td)
 	if ((ret = rpma_conn_get_private_data(cd->conn, &pdata)))
 		goto err_conn_delete;
 
-	/* create the server's memory representation */
-	data = pdata.ptr;
-	if ((ret = rpma_mr_remote_from_descriptor(&data->descriptors[0],
-			data->mr_desc_size, &cd->server_mr)))
+	ws = pdata.ptr;
+
+	/* validate the received workspace size */
+	if (ws->size < td->o.size) {
+		log_err(
+			"received workspace size is too small (%u < %llu)\n",
+			ws->size, td->o.size);
 		goto err_conn_delete;
+	}
+
+	/* create the server's memory representation */
+	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
+			ws->mr_desc_size, &cd->server_mr)))
+		goto err_conn_delete;
+
+	/* get the total size of the shared server memory */
+	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
+		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+		goto err_conn_delete;
+	}
+
+	/* validate the received workspace size */
+	cd->ws_offset = (td->thread_number - 1) * ws->size;
+	if (cd->ws_offset > server_mr_size) {
+		log_err(
+			"the workspace starts beyond the memory region (%zu > %zu)\n",
+			cd->ws_offset, server_mr_size);
+		goto err_conn_delete;
+	} else if (cd->ws_offset + ws->size > server_mr_size) {
+		log_err(
+			"the workspace ends beyond the memory region (%zu > %zu)\n",
+			cd->ws_offset + ws->size, server_mr_size);
+		goto err_conn_delete;
+	}
 
 	/* configure peer's direct write to pmem support */
 	ret = rpma_peer_cfg_new(&pcfg);
@@ -244,6 +281,7 @@ static int client_init(struct thread_data *td)
 
 	(void) rpma_peer_cfg_delete(&pcfg);
 
+	cd->ws_size = ws->size;
 	td->io_ops_data = cd;
 
 	return 0;
@@ -355,23 +393,14 @@ static void client_cleanup(struct thread_data *td)
 	free(td->io_ops_data);
 }
 
-static int client_setup(struct thread_data *td)
+static int client_get_file_size(struct thread_data *td, struct fio_file *f)
 {
 	struct client_data *cd = td->io_ops_data;
 
-	/*
-	 * FIO says:
-	 * The setup() hook has to find out physical size of files or devices
-	 * for this thread, before we determine I/O size and range of our
-	 * targets. It is responsible for opening the files and setting
-	 * f->real_file_size to indicate the valid range for that file.
-	 */
-	struct fio_file *f = td->files[0];
-	int ret;
-	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &f->real_file_size)))
-		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+	f->real_file_size = cd->ws_size;
+	fio_file_set_size_known(f);
 
-	return ret;
+	return 0;
 }
 
 static int client_open_file(struct thread_data *td, struct fio_file *f)
@@ -390,7 +419,7 @@ static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int 
 {
 	struct client_data *cd = td->io_ops_data;
 	size_t dst_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-	size_t src_offset = io_u->offset;
+	size_t src_offset = cd->ws_offset + io_u->offset;
 	int ret = rpma_read(cd->conn,
 			cd->orig_mr, dst_offset,
 			cd->server_mr, src_offset,
@@ -703,7 +732,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.version		= FIO_IOOPS_VERSION,
 	.init			= client_init,
 	.post_init		= client_post_init,
-	.setup			= client_setup,
+	.get_file_size		= client_get_file_size,
 	.open_file		= client_open_file,
 	.queue			= client_queue,
 	.commit			= client_commit,
@@ -775,7 +804,7 @@ struct server_data {
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
 
-	struct example_common_data data;
+	struct workspace ws;
 	struct rpma_conn_private_data pdata;
 };
 
@@ -909,17 +938,19 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 
 	/* get the memory region's descriptor */
-	ret = rpma_mr_get_descriptor(mr, &sd->data.descriptors[0]);
+	ret = rpma_mr_get_descriptor(mr, &sd->ws.descriptors[0]);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_mr_get_descriptor");
 		goto err_mr_dereg;
 	}
 
-	sd->data.data_offset = 0;
-	sd->data.mr_desc_size = mr_desc_size;
+	/* prepare a workspace description */
+	sd->ws.mr_desc_size = mr_desc_size;
+	sd->ws.size = td_max_bs(td);
 
-	sd->pdata.ptr = &sd->data;
-	sd->pdata.len = sizeof(struct example_common_data);
+	/* attach the workspace to private data structure */
+	sd->pdata.ptr = &sd->ws;
+	sd->pdata.len = sizeof(struct workspace);
 
 	FILE_SET_ENG_DATA(f, mr);
 
@@ -1015,9 +1046,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
 	struct server_options *o = td->eo;
-	struct server_data *sd =  td->io_ops_data;
 	struct rpma_conn **conns;
-	size_t bs = td_max_bs(td);
 	int i;
 
 	/* prepare space for connection objects */
@@ -1034,16 +1063,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 			td->terminate = true;
 			break;
 		}
-
-		/* an overflow guard */
-		if (sd->data.data_offset + bs < sd->data.data_offset) {
-			td_vmsg(td, EOVERFLOW,
-				"example_common_data.data_offset too small to describe connection's workspace offset",
-				"server_queue");
-		}
-
-		/* move another connection to the next workspace */
-		sd->data.data_offset += bs;
 	}
 
 	/* close all connections */

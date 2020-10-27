@@ -15,6 +15,8 @@ thread
 
 [client]
 create_serialize=0
+numjobs=1
+group_reporting=1
 iomem_align=[page size]
 iodepth=[total # of ious]
 iodepth_batch_submit=[# of ious to submit at once]
