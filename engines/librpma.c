@@ -537,6 +537,14 @@ static int client_commit(struct thread_data *td)
 	bool fill_time;
 	int ret;
 	int i;
+	enum rpma_flush_type flush_type;
+	int remote_flush_type;
+
+	(void) rpma_mr_remote_get_flush_type(cd->server_mr, &remote_flush_type);
+	if (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT)
+		flush_type = RPMA_FLUSH_TYPE_PERSISTENT;
+	else
+		flush_type = RPMA_FLUSH_TYPE_VISIBILITY;
 
 	if (!cd->io_us_queued)
 		return -1;
@@ -545,13 +553,27 @@ static int client_commit(struct thread_data *td)
 	for (i = 0; i < cd->io_u_queued_nr; i++) {
 		struct io_u *io_u = cd->io_us_queued[i];
 
-		if (i == cd->io_u_queued_nr - 1)
-			flags = RPMA_F_COMPLETION_ALWAYS;
-
 		if (io_u->ddir == DDIR_READ) {
+			if (i == cd->io_u_queued_nr - 1)
+				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
 			if ((ret = client_io_read(td, io_u, flags)))
 				return -1;
+		} else if (io_u->ddir == DDIR_WRITE) {
+			/* XXX - random read/write */
+			/* post an RDMA write operation */
+			if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
+				return -1;
+			if (i == cd->io_u_queued_nr - 1) {
+				ret = rpma_flush(cd->conn, cd->server_mr,
+					io_u->offset, 0 /* XXX length of all write */,
+					flush_type, RPMA_F_COMPLETION_ALWAYS,
+					(void *)(uintptr_t)io_u->index);
+				if (ret) {
+					rpma_td_verror(td, ret, "rpma_flush");
+					return -1;
+				}
+			}
 		} else {
 			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
 			return -1;
