@@ -102,6 +102,7 @@ static int client_init(struct thread_data *td)
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *req = NULL;
+	struct rpma_peer_cfg *pcfg = NULL;
 	enum rpma_conn_event event;
 	struct rpma_conn_private_data pdata;
 	struct example_common_data *data;
@@ -222,9 +223,33 @@ static int client_init(struct thread_data *td)
 			data->mr_desc_size, &cd->server_mr)))
 		goto err_conn_delete;
 
+	/* configure peer's direct write to pmem support */
+	ret = rpma_peer_cfg_new(&pcfg);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_peer_cfg_new");
+		goto err_conn_delete;
+	}
+
+	ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
+		goto peer_cfg_delete;
+	}
+
+	ret = rpma_conn_apply_remote_peer_cfg(cd->conn, pcfg);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
+		goto peer_cfg_delete;
+	}
+
+	(void) rpma_peer_cfg_delete(&pcfg);
+
 	td->io_ops_data = cd;
 
 	return 0;
+
+peer_cfg_delete:
+	(void) rpma_peer_cfg_delete(&pcfg);
 
 err_conn_delete:
 	(void) rpma_conn_disconnect(cd->conn);
@@ -276,7 +301,8 @@ static int client_post_init(struct thread_data *td)
 
 	if ((ret = rpma_mr_reg(cd->peer, cd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
-			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
+			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT,
 			&cd->orig_mr)))
 		rpma_td_verror(td, ret, "rpma_mr_reg");
 	return ret;
@@ -379,6 +405,26 @@ static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int 
 	return 0;
 }
 
+static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int flags)
+{
+	struct client_data *cd = td->io_ops_data;
+	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+	size_t dst_offset = io_u->offset;
+
+	int ret = rpma_write(cd->conn,
+			cd->server_mr, dst_offset,
+			cd->orig_mr, src_offset,
+			io_u->xfer_buflen,
+			flags,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_write");
+		return -1;
+	}
+
+	return 0;
+}
+
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
@@ -392,6 +438,15 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	if (io_u->ddir == DDIR_READ) {
 		/* post an RDMA read operation */
 		if ((ret = client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS)))
+			goto err;
+	} else if (io_u->ddir == DDIR_WRITE) {
+		/* post an RDMA write operation */
+		if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
+			goto err;
+		if ((ret = rpma_flush(cd->conn, cd->server_mr,
+				io_u->offset, io_u->xfer_buflen,
+				RPMA_FLUSH_TYPE_PERSISTENT, RPMA_F_COMPLETION_ALWAYS,
+				(void *)(uintptr_t)io_u->index)))
 			goto err;
 	} else {
 		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
@@ -831,7 +886,8 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	ret = rpma_mr_reg(sd->peer, sd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
-			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
+			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT,
 			&mr);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_mr_reg");
