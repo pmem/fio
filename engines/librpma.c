@@ -516,13 +516,28 @@ static int client_commit(struct thread_data *td)
 	for (i = 0; i < cd->io_u_queued_nr; i++) {
 		struct io_u *io_u = cd->io_us_queued[i];
 
-		if (i == cd->io_u_queued_nr - 1)
-			flags = RPMA_F_COMPLETION_ALWAYS;
-
 		if (io_u->ddir == DDIR_READ) {
+			if (i == cd->io_u_queued_nr - 1)
+				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
 			if ((ret = client_io_read(td, io_u, flags)))
 				return -1;
+		} else if (io_u->ddir == DDIR_WRITE) {
+			/* XXX - random read/write */
+			/* post an RDMA write operation */
+			if ((ret = client_io_write(td, io_u, flags)))
+				return -1;
+			if (i == cd->io_u_queued_nr - 1) {
+				flags = RPMA_F_COMPLETION_ALWAYS;
+				ret = rpma_flush(cd->conn, cd->server_mr,
+					io_u->offset, 0 /* XXX length of all write */,
+					RPMA_FLUSH_TYPE_PERSISTENT, flags,
+					(void *)(uintptr_t)io_u->index);
+				if (ret) {
+					rpma_td_verror(td, ret, "rpma_flush");
+					return -1;
+				}
+			}
 		} else {
 			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
 			return -1;
