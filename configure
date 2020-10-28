@@ -935,6 +935,25 @@ fi
 print_config "rdmacm" "$rdmacm"
 
 ##########################################
+# librpma probe
+if test "$librpma" != "yes" ; then
+  librpma="no"
+fi
+cat > $TMPC << EOF
+#include <stdio.h>
+#include <librpma.h>
+int main(int argc, char **argv)
+{
+  rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
+  return 0;
+}
+EOF
+if test "$disable_rdma" != "yes" && compile_prog "" "-lrpma" "rpma"; then
+    librpma="yes"
+fi
+print_config "librpma" "$librpma"
+
+##########################################
 # asprintf() and vasprintf() probes
 if test "$have_asprintf" != "yes" ; then
   have_asprintf="no"
@@ -2802,9 +2821,8 @@ fi
 if test "$libverbs" = "yes" -a "$rdmacm" = "yes" ; then
   output_sym "CONFIG_RDMA"
 fi
-# XXX librpma specific test needed
 # librpma is supported on the 'x86_64' architecture for now
-if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" ; then
+if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" -a "$librpma" = "yes" ; then
   output_sym "CONFIG_LIBRPMA"
 fi
 if test "$clock_gettime" = "yes" ; then
