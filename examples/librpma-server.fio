@@ -19,4 +19,4 @@ create_serialize=0
 iomem_align=[page size]
 num_conns=[total # of connections]
 size=[size of workspace for a single connection]
-filename=[XXX device dax or an existing fsdax file]
+mem=mmap:/path/to/pmem_file # [device dax or an existing fsdax file]
