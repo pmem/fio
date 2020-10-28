@@ -16,6 +16,6 @@ thread
 
 [server]
 create_serialize=0
-filename=[XXX device dax or an existing fsdax file]
+mem=mmap:/path/to/file # [XXX device dax or an existing fsdax file]
 size=[XXX size]
 mem_align=[XXX memory alignment of the I/O memory buffers]

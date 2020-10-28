@@ -706,6 +706,11 @@ struct server_data {
 
 	struct example_common_data data;
 	struct rpma_conn_private_data pdata;
+
+	/* memory allocated with iomem_alloc() is persistent */
+	int is_pmem;
+	/* size of the mapped persistent memory */
+	size_t size_pmem;
 };
 
 static int server_init(struct thread_data *td)
@@ -714,6 +719,26 @@ static int server_init(struct thread_data *td)
 	struct server_data *sd;
 	struct ibv_context *dev = NULL;
 	int ret = 1;
+
+	if (td->o.mem_type == MEM_MMAP) {
+		/*
+		 * Zero mem_type if mem_type == MEM_MMAP,
+		 * because we want alloc_pmem_map_file() to be called
+		 * in this case, but custom iomem hooks are called
+		 * only if mem_type is not set.
+		 */
+		td->o.mem_type = 0;
+		/* XXX HACK - make the mem_type option unset */
+		td->o.set_options[1] &= ~(uint64_t)1;
+	} else {
+		/*
+		 * Reset iomem hooks if mem_type != MEM_MMAP,
+		 * because alloc_pmem_map_file() should be called
+		 * only if td->o.mem_type == MEM_MMAP.
+		 */
+		td->io_ops->iomem_alloc = NULL;
+		td->io_ops->iomem_free = NULL;
+	}
 
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
@@ -929,6 +954,68 @@ err_req_delete:
 	return FIO_Q_COMPLETED;
 }
 
+static int alloc_pmem_map_file(struct thread_data *td, size_t size)
+{
+	struct server_data *sd =  td->io_ops_data;
+	size_t size_pmem = 0;
+	void *mem = NULL;
+	int is_pmem = 0;
+
+	if (!td->o.mmapfile) {
+		log_err("fio: mmapfile is not set\n");
+		return 1;
+	}
+
+	/* map the file */
+	mem = pmem_map_file(td->o.mmapfile, 0 /* len */, 0 /* flags */,
+			0 /* mode */, &size_pmem, &is_pmem);
+	if (mem == NULL) {
+		log_err("fio: pmem_map_file(%s) failed\n", td->o.mmapfile);
+		/* pmem_map_file() sets errno on failure */
+		td_verror(td, errno, "pmem_map_file");
+		return 1;
+	}
+
+	/* pmem is expected */
+	if (!is_pmem) {
+		log_err("fio: %s is not located in persistent memory\n", td->o.mmapfile);
+		(void) pmem_unmap(mem, size_pmem);
+		return 1;
+	}
+
+	sd->is_pmem = 1;
+	sd->size_pmem = size_pmem;
+	td->orig_buffer = mem;
+
+	dprint(FD_MEM, "alloc_pmem_map_file %llu %p\n",
+		(unsigned long long) size, td->orig_buffer);
+
+	return td->orig_buffer == NULL;
+}
+
+static int server_iomem_alloc(struct thread_data *td, size_t size)
+{
+	struct server_data *sd =  td->io_ops_data;
+
+	sd->is_pmem = 0;
+	sd->size_pmem = 0;
+
+	return alloc_pmem_map_file(td, size);
+}
+
+static void server_iomem_free(struct thread_data *td)
+{
+	struct server_data *sd =  td->io_ops_data;
+
+	if (!sd)
+		return;
+
+	if (sd->is_pmem)
+		(void) pmem_unmap(td->orig_buffer, sd->size_pmem);
+	else
+		free(td->orig_buffer);
+}
+
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_server",
 	.version		= FIO_IOOPS_VERSION,
@@ -937,9 +1024,10 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.close_file		= server_close_file,
 	.queue			= server_queue,
 	.cleanup		= server_cleanup,
-	/* XXX FIO_DISKLESSIO should be removed when pmem_map_file() will be added */
+	.iomem_alloc		= server_iomem_alloc,
+	.iomem_free		= server_iomem_free,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
-				  FIO_NOSTATS | FIO_DISKLESSIO,
+				  FIO_NOSTATS,
 	.options		= fio_server_options,
 	.option_struct_size	= sizeof(struct server_options),
 };
