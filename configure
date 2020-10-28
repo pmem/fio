@@ -2804,7 +2804,7 @@ if test "$libverbs" = "yes" -a "$rdmacm" = "yes" ; then
 fi
 # XXX librpma specific test needed
 # librpma is supported on the 'x86_64' architecture for now
-if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" ; then
+if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" -a "$libpmem" = "yes" ; then
   output_sym "CONFIG_LIBRPMA"
 fi
 if test "$clock_gettime" = "yes" ; then
