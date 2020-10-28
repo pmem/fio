@@ -1118,13 +1118,21 @@ static int server_iomem_alloc(struct thread_data *td, size_t size)
 		return 1;
 	}
 
+	/* check size of allocated persistent memory */
+	if (size_pmem < size) {
+		log_err("fio: failed to allocate enough amount of persistent memory (%zu < %zu)\n",
+			size_pmem, size);
+		(void) pmem_unmap(mem, size_pmem);
+		return 1;
+	}
+
 	sd->size_pmem = size_pmem;
 	td->orig_buffer = mem;
 
 	dprint(FD_MEM, "server_iomem_alloc %llu %p\n",
 		(unsigned long long) size, td->orig_buffer);
 
-	return td->orig_buffer == NULL;
+	return 0;
 }
 
 static void server_iomem_free(struct thread_data *td)
@@ -1133,6 +1141,15 @@ static void server_iomem_free(struct thread_data *td)
 
 	if (sd)
 		(void) pmem_unmap(td->orig_buffer, sd->size_pmem);
+
+	td->orig_buffer = NULL;
+	td->orig_buffer_size = 0;
+}
+
+static int server_invalidate(struct thread_data *td, struct fio_file *file)
+{
+	/* there is nothing to do now */
+	return 0;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_server = {
@@ -1142,6 +1159,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.open_file		= server_open_file,
 	.close_file		= server_close_file,
 	.queue			= server_queue,
+	.invalidate		= server_invalidate,
 	.cleanup		= server_cleanup,
 	.iomem_alloc		= server_iomem_alloc,
 	.iomem_free		= server_iomem_free,
