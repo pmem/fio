@@ -1023,17 +1023,15 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	/* prepare space for connection objects */
 	conns = calloc(o->num_conns, sizeof(struct rpma_conn *));
 	if (conns == NULL) {
-		td->terminate = true;
-		return FIO_Q_COMPLETED;
+		td_verror(td, errno, "calloc");
+		goto err_terminate;
 	}
 
 	/* establish all connections */
 	for (i = 0; i < o->num_conns; ++i) {
 		conns[i] = server_conn_establish(td);
-		if (conns[i] == NULL) {
-			td->terminate = true;
-			break;
-		}
+		if (conns[i] == NULL)
+			goto err_disconnect;
 
 		/* an overflow guard */
 		if (sd->data.data_offset + bs < sd->data.data_offset) {
@@ -1047,17 +1045,30 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	}
 
 	/* close all connections */
-	for (i = 0; i < o->num_conns && conns[i] != NULL; ++i) {
+	for (i = 0; i < o->num_conns; ++i) {
 		server_conn_shutdown(td, conns[i]);
 		conns[i] = NULL;
 	}
 
-	/* free space after connection objects */
+	/* free space of connection objects */
 	free(conns);
 
-	/* if the thread didn't fail the job is done */
-	if (!td->terminate)
-		td->done = true;
+	td->done = true;
+
+	return FIO_Q_COMPLETED;
+
+err_disconnect:
+	/* close all connections */
+	for (i = 0; i < o->num_conns && conns[i] != NULL; ++i) {
+		(void) rpma_conn_disconnect(conns[i]);
+		(void) rpma_conn_delete(&conns[i]);
+	}
+
+	/* free space of connection objects */
+	free(conns);
+
+err_terminate:
+	td->terminate = true;
 
 	return FIO_Q_COMPLETED;
 }
