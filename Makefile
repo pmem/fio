@@ -101,7 +101,7 @@ ifdef CONFIG_RDMA
 endif
 ifdef CONFIG_LIBRPMA
   librpma_SRCS = engines/librpma.c
-  librpma_LIBS = -lrpma
+  librpma_LIBS = -lrpma -lpmem
   ENGINES += librpma
 endif
 ifdef CONFIG_POSIXAIO
