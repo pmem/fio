@@ -79,6 +79,7 @@ static struct fio_option fio_client_options[] = {
 struct client_data {
 	struct rpma_peer *peer;
 	struct rpma_conn *conn;
+	enum rpma_flush_type flush_type;
 
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
@@ -109,12 +110,12 @@ static int client_init(struct thread_data *td)
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *req = NULL;
-	struct rpma_peer_cfg *pcfg = NULL;
 	enum rpma_conn_event event;
 	uint32_t cq_size;
 	struct rpma_conn_private_data pdata;
 	struct workspace *ws;
 	size_t server_mr_size;
+	int remote_flush_type;
 	int ret = 1;
 
 	/* configure logging thresholds to see more details */
@@ -260,34 +261,20 @@ static int client_init(struct thread_data *td)
 		goto err_conn_delete;
 	}
 
-	/* configure peer's direct write to pmem support */
-	ret = rpma_peer_cfg_new(&pcfg);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_peer_cfg_new");
-		goto err_conn_delete;
-	}
-
-	ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
-		goto peer_cfg_delete;
-	}
-
-	ret = rpma_conn_apply_remote_peer_cfg(cd->conn, pcfg);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
-		goto peer_cfg_delete;
-	}
-
-	(void) rpma_peer_cfg_delete(&pcfg);
-
 	cd->ws_size = ws->size;
 	td->io_ops_data = cd;
 
-	return 0;
+	/* set flush type */
+	if ((ret = rpma_mr_remote_get_flush_type(cd->server_mr, &remote_flush_type))) {
+		rpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
+		goto err_conn_delete;
+	}
+	if (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT)
+		cd->flush_type = RPMA_FLUSH_TYPE_PERSISTENT;
+	else
+		cd->flush_type = RPMA_FLUSH_TYPE_VISIBILITY;
 
-peer_cfg_delete:
-	(void) rpma_peer_cfg_delete(&pcfg);
+	return 0;
 
 err_conn_delete:
 	(void) rpma_conn_disconnect(cd->conn);
@@ -474,7 +461,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			goto err;
 		if ((ret = rpma_flush(cd->conn, cd->server_mr,
 				io_u->offset, io_u->xfer_buflen,
-				RPMA_FLUSH_TYPE_PERSISTENT, RPMA_F_COMPLETION_ALWAYS,
+				cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
 				(void *)(uintptr_t)io_u->index)))
 			goto err;
 	} else {
