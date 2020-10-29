@@ -1052,21 +1052,18 @@ static void server_conn_shutdown(struct thread_data *td, struct rpma_conn *conn)
 	ret = rpma_conn_next_event(conn, &event);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_next_event");
-		goto conn_delete;
-	}
-	if (event != RPMA_CONN_CLOSED) {
+	} else if (event != RPMA_CONN_CLOSED) {
 		log_err(
 			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_CLOSED)\n",
 			rpma_utils_conn_event_2str(event));
 	}
 
-conn_delete:
 	(void) rpma_conn_disconnect(conn);
 	(void) rpma_conn_delete(&conn);
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
-					  struct io_u *io_u)
+					struct io_u *io_u)
 {
 	struct server_options *o = td->eo;
 	struct rpma_conn **conns;
@@ -1076,19 +1073,34 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	conns = calloc(o->num_conns, sizeof(struct rpma_conn *));
 	if (conns == NULL) {
 		td_verror(td, errno, "calloc");
-		goto err_terminate;
+
+		td->terminate = true;
+
+		return FIO_Q_COMPLETED;
 	}
 
 	/* establish all connections */
 	for (i = 0; i < o->num_conns; ++i) {
 		conns[i] = server_conn_establish(td);
-		if (conns[i] == NULL)
+		if (NULL == conns[i])
 			break;
 	}
 
 	/* if establishing the connections has been interrupted */
-	if (i != o->num_conns)
-		goto err_disconnect;
+	if (i != o->num_conns) {
+		/* close all already established connections */
+		for (i = 0; i < o->num_conns && conns[i] != NULL; ++i) {
+			(void) rpma_conn_disconnect(conns[i]);
+			(void) rpma_conn_delete(&conns[i]);
+		}
+
+		/* free space of connection objects */
+		free(conns);
+
+		td->terminate = true;
+
+		return FIO_Q_COMPLETED;
+	}
 
 	/* close all connections */
 	for (i = 0; i < o->num_conns; ++i) {
@@ -1100,21 +1112,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	free(conns);
 
 	td->done = true;
-
-	return FIO_Q_COMPLETED;
-
-err_disconnect:
-	/* close all connections */
-	for (i = 0; i < o->num_conns && conns[i] != NULL; ++i) {
-		(void) rpma_conn_disconnect(conns[i]);
-		(void) rpma_conn_delete(&conns[i]);
-	}
-
-	/* free space of connection objects */
-	free(conns);
-
-err_terminate:
-	td->terminate = true;
 
 	return FIO_Q_COMPLETED;
 }
