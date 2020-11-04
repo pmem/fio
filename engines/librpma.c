@@ -117,6 +117,7 @@ static int client_init(struct thread_data *td)
 	size_t server_mr_size;
 	int remote_flush_type;
 	struct rpma_peer_cfg *pcfg = NULL;
+	unsigned int sq_size;
 	int ret = 1;
 
 	/* configure logging thresholds to see more details */
@@ -166,7 +167,19 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* the send queue has to be big enough to accommodate all io_u's */
-	ret = rpma_conn_cfg_set_sq_size(cfg, td->o.iodepth);
+	if (td_write(td)) {
+		if (td->o.sync_io)
+			sq_size = 2; /* WRITE + FLUSH */
+		else
+			/* XXX - need to improve with the implementation of the asynchronous write */
+			sq_size = td->o.iodepth_batch + 1; /* N x WRITE + FLUSH */
+	} else {
+		if (td->o.sync_io)
+			sq_size = 1; /* READ */
+		else
+			sq_size = td->o.iodepth /* N x READ */
+	}
+	ret = rpma_conn_cfg_set_sq_size(cfg, sq_size);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
