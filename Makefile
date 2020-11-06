@@ -104,6 +104,11 @@ ifdef CONFIG_LIBRPMA
   librpma_LIBS = -lrpma -lpmem
   ENGINES += librpma
 endif
+ifdef CONFIG_LIBRPMA_GPSPM
+  librpma_gpspm_SRCS = engines/librpma_gpspm.c
+  librpma_gpspm_LIBS = -lrpma -lpmem
+  ENGINES += librpma_gpspm
+endif
 ifdef CONFIG_POSIXAIO
   SOURCE += engines/posixaio.c
 endif
