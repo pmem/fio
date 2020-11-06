@@ -2824,6 +2824,7 @@ fi
 # librpma is supported on the 'x86_64' architecture for now
 if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" -a "$librpma" = "yes" -a "$libpmem" = "yes" ; then
   output_sym "CONFIG_LIBRPMA"
+  output_sym "CONFIG_LIBRPMA_GPSPM"
 fi
 if test "$clock_gettime" = "yes" ; then
   output_sym "CONFIG_CLOCK_GETTIME"

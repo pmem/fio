@@ -146,6 +146,10 @@ static const struct opt_group fio_opt_cat_groups[] = {
 		.mask	= FIO_OPT_G_LIBRPMA,
 	},
 	{
+		.name	= "LIBRPMA_GPSPM I/O engine", /* librpma_gpspm */
+		.mask	= FIO_OPT_G_LIBRPMA_GPSPM,
+	},
+	{
 		.name	= "libaio I/O engine", /* libaio */
 		.mask	= FIO_OPT_G_LIBAIO,
 	},
