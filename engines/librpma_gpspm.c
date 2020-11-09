@@ -208,19 +208,74 @@ static struct fio_option fio_server_options[] = {
 };
 
 struct server_data {
-	/* XXX */
+	struct rpma_peer *peer;
+	struct rpma_ep *ep;
 };
 
 static int server_init(struct thread_data *td)
 {
+	struct server_options *o = td->eo;
+	struct server_data *sd;
+	struct ibv_context *dev = NULL;
+	int ret = 1;
+
+	/* configure logging thresholds to see more details */
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_DEBUG);
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_DEBUG);
+
+	/* allocate server's data */
+	sd = calloc(1, sizeof(struct server_data));
+	if (sd == NULL) {
+		td_verror(td, errno, "calloc");
+		return 1;
+	}
+
+	/* obtain an IBV context for a remote IP address */
+	ret = rpma_utils_get_ibv_context(o->bindname,
+				RPMA_UTIL_IBV_CONTEXT_LOCAL,
+				&dev);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		goto err_free_sd;
+	}
+
+	/* create a new peer object */
+	ret = rpma_peer_new(dev, &sd->peer);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_peer_new");
+		goto err_free_sd;
+	}
+
+	/* start a listening endpoint at addr:port */
+	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &sd->ep);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_listen");
+		goto err_peer_delete;
+	}
+
+	td->io_ops_data = sd;
+
 	/*
-	 * - configure logging thresholds
-	 * - allocate memory for server's data
-	 * - rpma_utils_get_ibv_context
-	 * - rpma_peer_new
-	 * - rpma_ep_listen
+	 * Each connection needs its own workspace which will be allocated as
+	 * io_u. So the number of io_us has to be equal to the number of
+	 * connections the server will handle and...
 	 */
+	td->o.iodepth = o->num_conns;
+
+	/*
+	 * ... a single io_u size has to be equal to the assumed workspace size.
+	 */
+	td->o.max_bs[DDIR_READ] = td->o.size;
+
 	return 0;
+
+err_peer_delete:
+	(void) rpma_peer_delete(&sd->peer);
+
+err_free_sd:
+	free(sd);
+
+	return ret;
 }
 
 static int server_post_init(struct thread_data *td)
