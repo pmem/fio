@@ -67,24 +67,47 @@ static struct fio_option fio_client_options[] = {
 };
 
 struct client_data {
-	/* XXX */
+	struct rpma_peer *peer;
+
+	/* in-memory queues */
+	struct io_u **io_us_queued;
+	int io_u_queued_nr;
+	struct io_u **io_us_flight;
+	int io_u_flight_nr;
+	struct io_u **io_us_completed;
+	int io_u_completed_nr;
 };
 
 static int client_init(struct thread_data *td)
 {
-	/* XXX */
+	struct server_options *o = td->eo;
+	(void) o; /* XXX delete when o will be used */
+
+	/*
+	 * - configure logging thresholds
+	 * - allocate client's data
+	 * - allocate all in-memory queues
+	 * - find ibv_context using o->hostname
+	 * - create new peer
+	 * - create a connection request (o->hostname, o->port) and connect it
+	 */
 	return 0;
 }
 
 static int client_post_init(struct thread_data *td)
 {
-	/* XXX */
+	/*
+	 * - rpma_send()
+	 */
 	return 0;
 }
 
 static void client_cleanup(struct thread_data *td)
 {
-	/* XXX */
+	/*
+	 * - rpma_mr_dereg
+	 * - free peer
+	 */
 }
 
 static int client_get_file_size(struct thread_data *td, struct fio_file *f)
@@ -108,26 +131,37 @@ static int client_close_file(struct thread_data *td, struct fio_file *f)
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
-	/* XXX */
+	/*
+	 * - add io_u to queued[] array
+	 */
 	return FIO_Q_BUSY;
 }
 
 static int client_commit(struct thread_data *td)
 {
-	/* XXX */
+	/*
+	 * - execute all io_us from queued[]
+	 * - move executed io_us to flight[]
+	 */
 	return 0;
 }
 
 static int client_getevents(struct thread_data *td, unsigned int min,
 				unsigned int max, const struct timespec *t)
 {
-	/* XXX */
+	/*
+	 * - wait for a completion
+	 * - move completed io_us to completed[]
+	 * - return # of io_us completed with collected completion
+	 */
 	return 0;
 }
 
 static struct io_u *client_event(struct thread_data *td, int event)
 {
-	/* XXX */
+	/*
+	 * - take io_us from completed[] (at the end it should be empty)
+	 */
 	return 0;
 }
 
