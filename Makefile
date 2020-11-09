@@ -105,7 +105,7 @@ ifdef CONFIG_LIBRPMA
   ENGINES += librpma
 endif
 ifdef CONFIG_LIBRPMA_GPSPM
-  librpma_gpspm_SRCS = engines/librpma_gpspm.c
+  librpma_gpspm_SRCS = engines/librpma_gpspm.c engines/GPSPM_flush.pb-c.c
   librpma_gpspm_LIBS = -lrpma -lpmem -lprotobuf-c
   ENGINES += librpma_gpspm
 endif
