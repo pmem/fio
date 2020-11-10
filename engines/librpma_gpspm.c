@@ -369,11 +369,25 @@ err_mr_dereg:
 
 static void server_cleanup(struct thread_data *td)
 {
-	/*
-	 * - rpma_mr_dereg(messaging buffer from DRAM)
-	 * - rpma_ep_shutdown
-	 * - rpma_peer_delete
-	 */
+	struct server_data *sd =  td->io_ops_data;
+	int ret;
+
+	if (sd == NULL)
+		return;
+
+	/* rpma_mr_dereg(messaging buffer from DRAM) */
+	if ((ret = rpma_mr_dereg(&sd->msg_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	/* shutdown the endpoint */
+	if ((ret = rpma_ep_shutdown(&sd->ep)))
+		rpma_td_verror(td, ret, "rpma_ep_shutdown");
+
+	/* free the peer */
+	if ((ret = rpma_peer_delete(&sd->peer)))
+		rpma_td_verror(td, ret, "rpma_peer_delete");
+
+	free(sd);
 }
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
