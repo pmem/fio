@@ -216,30 +216,69 @@ struct server_data {
 
 static int server_init(struct thread_data *td)
 {
-	/* XXX */
+	/*
+	 * - configure logging thresholds
+	 * - allocate memory for server's data
+	 * - rpma_utils_get_ibv_context
+	 * - rpma_peer_new
+	 * - rpma_ep_listen
+	 */
+	return 0;
+}
+
+static int server_post_init(struct thread_data *td)
+{
+	/*
+	 * - rpma_mr_reg(messaging buffer from DRAM)
+	 * - io_depth x rpma_recv()
+	 */
 	return 0;
 }
 
 static void server_cleanup(struct thread_data *td)
 {
-	/* XXX */
+	/*
+	 * - rpma_mr_dereg(messaging buffer from DRAM)
+	 * - rpma_ep_shutdown
+	 * - rpma_peer_delete
+	 */
 }
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
-	/* XXX */
+	/*
+	 * - pmem_map_file()
+	 * - rpma_mr_reg(PMem)
+	 * - rpma_mr_get_descriptor_size
+	 * - verify size of the memory region's descriptor
+	 * - rpma_mr_get_descriptor
+	 * - rpma_ep_next_conn_req()
+	 * - rpma_recv()
+	 * - rpma_conn_connect(pmem's memory region)
+	 */
+
 	return 0;
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	/* XXX */
+	/*
+	 * - rpma_mr_dereg(PMem)
+	 * - FILE_SET_ENG_DATA(f, NULL);
+	 */
 	return 0;
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
+	/*
+	 * - rpma_conn_completion_wait()
+	 * - rpma_conn_completion_get()
+	 * - pmem_persist(f, NULL);
+	 * - rpma_recv() to prepare for next incoming receive
+	 * - rpma_send(the response)
+	 */
 	return FIO_Q_BUSY;
 }
 
@@ -253,6 +292,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_gpspm_server",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= server_init,
+	.post_init		= server_post_init,
 	.open_file		= server_open_file,
 	.close_file		= server_close_file,
 	.queue			= server_queue,
