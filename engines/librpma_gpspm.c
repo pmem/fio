@@ -249,6 +249,15 @@ static struct fio_option fio_server_options[] = {
 struct server_data {
 	struct rpma_peer *peer;
 	struct rpma_ep *ep;
+
+	/* aligned td->orig_buffer */
+	char *orig_buffer_aligned;
+
+	/* an incoming connection request */
+	struct rpma_conn_req *conn_req;
+
+	/* resources for messaging buffer from DRAM allocated by fio */
+	struct rpma_mr_local *msg_mr;
 };
 
 static int server_init(struct thread_data *td)
@@ -307,11 +316,55 @@ err_free_sd:
 
 static int server_post_init(struct thread_data *td)
 {
+	struct server_data *sd = td->io_ops_data;
+	size_t io_us_size;
+	size_t msg_size;
+	int ret;
+	int i;
+
 	/*
-	 * - rpma_mr_reg(messaging buffer from DRAM)
-	 * - io_depth x rpma_recv()
+	 * td->orig_buffer is not aligned. The engine requires aligned io_us
+	 * so FIO alignes up the address using the formula below.
 	 */
+	sd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
+			td->o.mem_align;
+
+	msg_size = td_max_bs(td);
+
+	/*
+	 * td->orig_buffer_size beside the space really consumed by io_us
+	 * has paddings which can be omitted for the memory registration.
+	 */
+	io_us_size = (unsigned long long)msg_size *
+			(unsigned long long)td->o.iodepth;
+
+	ret = rpma_mr_reg(sd->peer, sd->orig_buffer_aligned, io_us_size,
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
+			&sd->msg_mr);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_mr_reg");
+		return 1;
+	}
+
+	/* receive an incoming connection request */
+	if ((ret = rpma_ep_next_conn_req(sd->ep, NULL, &sd->conn_req)))
+		goto err_mr_dereg;
+
+	/* prepare buffers for a flush requests */
+	for (i = 0; i < td->o.iodepth; i++)
+		if ((ret = rpma_conn_req_recv(sd->conn_req, sd->msg_mr,
+				i * msg_size, msg_size, NULL)))
+			goto err_req_delete;
+
 	return 0;
+
+err_req_delete:
+	(void) rpma_conn_req_delete(&sd->conn_req);
+
+err_mr_dereg:
+	(void) rpma_mr_dereg(&sd->msg_mr);
+
+	return ret;
 }
 
 static void server_cleanup(struct thread_data *td)
