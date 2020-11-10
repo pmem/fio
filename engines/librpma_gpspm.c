@@ -29,7 +29,19 @@
 
 /* client's and server's common */
 
-/* XXX */
+/*
+ * Limited by the maximum length of the private data
+ * for rdma_connect() in case of RDMA_PS_TCP (56 bytes).
+ */
+#define DESCRIPTORS_MAX_SIZE 24
+
+struct common_data {
+	uint16_t data_offset;	/* user data offset */
+	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
+	uint8_t pcfg_desc_size;	/* size of pcfg_desc in descriptors[] */
+	/* buffer containing mr_desc and pcfg_desc */
+	char descriptors[DESCRIPTORS_MAX_SIZE];
+};
 
 /* client side implementation */
 
@@ -253,8 +265,17 @@ struct server_data {
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
 
-	/* an incoming connection request */
+	/* resources of an incoming connection */
 	struct rpma_conn_req *conn_req;
+	struct rpma_conn *conn;
+
+	/* memory mapped from a file */
+	void *mmap_ptr;
+	/* size of the mapped memory from a file */
+	size_t mmap_size;
+	/* memory mapped from a file is persistent */
+	int mmap_is_pmem;
+	struct rpma_mr_local *mmap_mr;
 
 	/* resources for messaging buffer from DRAM allocated by fio */
 	struct rpma_mr_local *msg_mr;
@@ -389,18 +410,106 @@ static void server_cleanup(struct thread_data *td)
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
+	struct server_data *sd =  td->io_ops_data;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
+	struct rpma_conn_private_data pdata;
+	struct rpma_mr_local *mmap_mr;
+	struct common_data data;
+	struct rpma_conn *conn;
+	size_t mr_desc_size;
+	size_t mmap_size = 0;
+	void *mmap_ptr;
+	int mmap_is_pmem;
+	int ret;
+
+	if (!td->o.mmapfile) {
+		log_err("fio: mmapfile is not set\n");
+		return 1;
+	}
+
+	/* map the file */
+	mmap_ptr = pmem_map_file(td->o.mmapfile, 0 /* len */, 0 /* flags */,
+			0 /* mode */, &mmap_size, &mmap_is_pmem);
+	if (mmap_ptr == NULL) {
+		log_err("fio: pmem_map_file(%s) failed\n", td->o.mmapfile);
+		/* pmem_map_file() sets errno on failure */
+		td_verror(td, errno, "pmem_map_file");
+		return 1;
+	}
+
+	if (!mmap_is_pmem)
+		log_info("fio: %s is not located in persistent memory\n",
+			td->o.mmapfile);
+
+	log_info("fio: size of memory mapped from the file %s: %zu\n",
+		td->o.mmapfile, mmap_size);
+
+	ret = rpma_mr_reg(sd->peer, mmap_ptr, mmap_size,
+			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
+			(mmap_is_pmem ? RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT :
+				RPMA_MR_USAGE_FLUSH_TYPE_VISIBILITY),
+			&mmap_mr);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_mr_reg");
+		goto err_pmem_unmap;
+	}
+
+	/* get size of the memory region's descriptor */
+	ret = rpma_mr_get_descriptor_size(mmap_mr, &mr_desc_size);
+	if (ret)
+		goto err_mr_dereg;
+
+	/* calculate data for the server read */
+	data.mr_desc_size = mr_desc_size;
+	data.data_offset = 0;
+
+	/* get the memory region's descriptor */
+	if ((ret = rpma_mr_get_descriptor(mmap_mr, &data.descriptors[0])))
+		goto err_mr_dereg;
+
 	/*
-	 * - pmem_map_file()
-	 * - rpma_mr_reg(PMem)
-	 * - rpma_mr_get_descriptor_size
-	 * - verify size of the memory region's descriptor
-	 * - rpma_mr_get_descriptor
-	 * - rpma_ep_next_conn_req()
-	 * - rpma_recv()
-	 * - rpma_conn_connect(pmem's memory region)
+	 * Wait for an incoming connection request, accept it and wait for its
+	 * establishment.
 	 */
+	pdata.ptr = &data;
+	pdata.len = sizeof(struct common_data);
+
+	/* accept the connection request and obtain the connection object */
+	if ((ret = rpma_conn_req_connect(&sd->conn_req, &pdata, &conn)))
+		goto err_mr_dereg;
+
+	/* wait for the connection to be established */
+	ret = rpma_conn_next_event(sd->conn, &conn_event);
+	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		ret = 1;
+	}
+	if (ret)
+		goto err_conn_delete;
+
+	sd->mmap_mr = mmap_mr;
+	sd->mmap_ptr = mmap_ptr;
+	sd->mmap_size = mmap_size;
+	sd->mmap_is_pmem = mmap_is_pmem;
+	sd->conn = conn;
 
 	return 0;
+
+err_conn_delete:
+	sd->conn_req = NULL; /* do not call rpma_conn_req_delete() */
+	(void) rpma_conn_delete(&conn);
+
+err_mr_dereg:
+	(void) rpma_mr_dereg(&mmap_mr);
+
+err_pmem_unmap:
+	(void) pmem_unmap(mmap_ptr, mmap_size);
+
+	if (sd->conn_req)
+		(void) rpma_conn_req_delete(&sd->conn_req);
+
+	return ret;
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
