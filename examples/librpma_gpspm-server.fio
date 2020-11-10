@@ -21,3 +21,8 @@ iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 num_conns=[total # of connections]
 size=[size of workspace for a single connection]
 mem=mmap:/path/to/pmem_file # [device dax or an existing fsdax file]
+
+# XXX blocksize should equal the sum of the sizes of recv and send messages.
+# It is set to a fixed value now, but there is a possibility to calculate it
+# at runtime (according to values suggested by protobuff-c).
+blocksize=1KiB
