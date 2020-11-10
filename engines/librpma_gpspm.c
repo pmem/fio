@@ -89,6 +89,16 @@ struct client_data {
 	/* a server's memory representation */
 	struct rpma_mr_remote *server_mr;
 
+	/* aligned td->orig_buffer */
+	char *orig_buffer_aligned;
+
+	/* ious's base address memory registration (cd->orig_buffer_aligned) */
+	struct rpma_mr_local *orig_mr;
+
+	/* memory for sending and reciving buffered */
+	#define MSGS_SIZE (1024)
+	char *io_us_msgs;
+
 	/* in-memory queues */
 	struct io_u **io_us_queued;
 	int io_u_queued_nr;
@@ -176,6 +186,16 @@ static int client_init(struct thread_data *td)
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
+
+	/*
+	 * The recv queue has to be big enough
+	 * to accommodate one completion for each batch.
+	 */
+	ret = rpma_conn_cfg_set_rq_size(cfg, cq_size);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
 	
 	/* create a new peer object */
 	ret = rpma_peer_new(dev, &cd->peer);
@@ -260,10 +280,39 @@ err_free_cd:
 
 static int client_post_init(struct thread_data *td)
 {
+	struct client_data *cd =  td->io_ops_data;
+	size_t io_us_size;
+	unsigned int io_us_msgs_size;
+	int ret;
+
+	/* message buffers registration */
+	io_us_msgs_size = 2 * td->o.iodepth/td->o.iodepth_batch * MSGS_SIZE + 1;
+
+	if ((ret = posix_memalign((void **)&cd->io_us_msgs, page_mask, io_us_msgs_size))) {
+		rpma_td_verror(td, ret, "posix_memalign");
+		return ret;
+	}
+
 	/*
-	 * - register the buffers for rpma_send()
+	 * td->orig_buffer is not aligned. The engine requires aligned io_us
+	 * so FIO alignes up the address using the formula below.
 	 */
-	return 0;
+	cd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
+			td->o.mem_align;
+
+	/*
+	 * td->orig_buffer_size beside the space really consumed by io_us
+	 * has paddings which can be omitted for the memory registration.
+	 */
+	io_us_size = (unsigned long long)td_max_bs(td) *
+			(unsigned long long)td->o.iodepth;
+
+	if ((ret = rpma_mr_reg(cd->peer, cd->orig_buffer_aligned, io_us_size,
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
+			&cd->orig_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_reg");
+
+	return ret;
 }
 
 static void client_cleanup(struct thread_data *td)
