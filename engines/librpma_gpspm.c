@@ -653,11 +653,24 @@ err_pmem_unmap:
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	/*
-	 * - rpma_mr_dereg(PMem)
-	 * - FILE_SET_ENG_DATA(f, NULL);
-	 */
-	return 0;
+	struct server_data *sd =  td->io_ops_data;
+	int ret, ret1, ret2;
+
+	if ((ret1 = rpma_conn_delete(&sd->conn)))
+		rpma_td_verror(td, ret1, "rpma_conn_delete");
+
+	if ((ret2 = rpma_mr_dereg(&sd->mmap_mr)))
+		rpma_td_verror(td, ret2, "rpma_mr_dereg");
+
+	ret = ret1 | ret2;
+
+	if (pmem_unmap(sd->mmap_ptr, sd->mmap_size)) {
+		td_verror(td, errno, "pmem_unmap");
+		if (!ret)
+			ret = errno;
+	}
+
+	return ret;
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
