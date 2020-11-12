@@ -331,11 +331,56 @@ static int client_post_init(struct thread_data *td)
 
 static void client_cleanup(struct thread_data *td)
 {
-	/*
-	 * - rpma_mr_dereg
-	 * - rpma_conn_disconnect
-	 * - free peer
-	 */
+	struct client_data *cd = td->io_ops_data;
+	enum rpma_conn_event ev;
+	int ret;
+
+	if (cd == NULL)
+		return;
+
+	/* delete the iou's memory registration */
+	if ((ret = rpma_mr_dereg(&cd->orig_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	/* delete the messaging buffer memory registration */
+	if ((ret = rpma_mr_dereg(&cd->msg_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	/* delete the iou's memory registration */
+	if ((ret = rpma_mr_remote_delete(&cd->server_mr)))
+		rpma_td_verror(td, ret, "rpma_mr_remote_delete");
+
+	/* initiate disconnection */
+	if ((ret = rpma_conn_disconnect(cd->conn)))
+		rpma_td_verror(td, ret, "rpma_conn_disconnect");
+
+	/* wait for disconnection to end up */
+	if ((ret = rpma_conn_next_event(cd->conn, &ev))) {
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
+	} else if (ev != RPMA_CONN_CLOSED) {
+		log_err(
+			"client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
+			rpma_utils_conn_event_2str(ev));
+	}
+
+	/* delete the connection */
+	if ((ret = rpma_conn_delete(&cd->conn)))
+		rpma_td_verror(td, ret, "rpma_conn_delete");
+
+	/* delete the peer */
+	if ((ret = rpma_peer_delete(&cd->peer)))
+		rpma_td_verror(td, ret, "rpma_peer_delete");
+
+	/* free message buffers registration */
+	free(cd->io_us_msgs);
+
+	/* free the software queues */
+	free(cd->io_us_queued);
+	free(cd->io_us_flight);
+	free(cd->io_us_completed);
+
+	/* free the client's data */
+	free(td->io_ops_data);
 }
 
 static int client_get_file_size(struct thread_data *td, struct fio_file *f)
