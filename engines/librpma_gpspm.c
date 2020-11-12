@@ -615,7 +615,9 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_conn_delete;
 
 	/* wait for the connection to be established */
-	ret = rpma_conn_next_event(sd->conn, &conn_event);
+	ret = rpma_conn_next_event(conn, &conn_event);
+	if (ret)
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
 	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
 		ret = 1;
