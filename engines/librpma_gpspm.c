@@ -531,6 +531,8 @@ struct server_data {
 
 	/* resources for messaging buffer from DRAM allocated by fio */
 	struct rpma_mr_local *msg_mr;
+	/* maximum size of a send/recv message */
+	size_t max_msg_size;
 };
 
 static int server_init(struct thread_data *td)
@@ -597,6 +599,7 @@ static int server_post_init(struct thread_data *td)
 	 * Aligning each of those buffers may potentially give some performance benefits.
 	 */
 	io_u_buflen = td_max_bs(td);
+	sd->max_msg_size = io_u_buflen / 2;
 
 	/*
 	 * td->orig_buffer_size beside the space really consumed by io_us
@@ -648,7 +651,6 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_ep *ep;
 	size_t mr_desc_size;
 	size_t mmap_size = 0;
-	size_t size_recv_msg;
 	void *mmap_ptr;
 	int mmap_is_pmem;
 	int ret;
@@ -712,12 +714,13 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_ep_shutdown;
 
 	/* prepare buffers for a flush requests */
-	size_recv_msg = td_max_bs(td) / 2;
-	for (i = 0; i < td->o.iodepth; i++)
+	for (i = 0; i < td->o.iodepth; i++) {
+		size_t offset_recv_msg = (2 * i + 1) * sd->max_msg_size;
 		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
-				(2 * i + 1) * size_recv_msg,
-				size_recv_msg, NULL)))
+				offset_recv_msg, sd->max_msg_size,
+				(const void *)(uintptr_t)i)))
 			goto err_req_delete;
+	}
 
 	/* accept the connection request and obtain the connection object */
 	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
@@ -807,12 +810,11 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	GPSPMFlushRequest *flush_req;
 	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
 	size_t flush_resp_size = 0;
-	size_t max_msg_size;
 	size_t send_offset;
-	size_t recv_offset;
 	void *send_ptr;
 	void *recv_ptr;
 	void *op_ptr;
+	int msg_index;
 	int ret;
 
 	/*
@@ -823,17 +825,16 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	 * so the server will transition to the cleanup stage.
 	 */
 
-	max_msg_size = io_u->xfer_buflen / 2;
-	send_offset = 0;
-	recv_offset = max_msg_size;
-	send_ptr = (char *)io_u->xfer_buf + send_offset;
-	recv_ptr = (char *)io_u->xfer_buf + recv_offset;
-
 	/* wait for the completion to be ready */
 	if ((ret = rpma_conn_completion_wait(sd->conn)))
 		goto err_terminate;
 	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
 		goto err_terminate;
+
+	msg_index = (int)(uintptr_t)cmpl.op_context;
+	send_offset = 2 * sd->max_msg_size * msg_index;
+	send_ptr = sd->orig_buffer_aligned + send_offset;
+	recv_ptr = send_ptr + sd->max_msg_size;
 
 	/* unpack a flush request from the received buffer */
 	flush_req = gpspm_flush_request__unpack(NULL, cmpl.byte_len, recv_ptr);
@@ -848,9 +849,9 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	/* prepare a flush response and pack it to a send buffer */
 	flush_resp.op_context = flush_req->op_context;
 	flush_resp_size = gpspm_flush_response__get_packed_size(&flush_resp);
-	if (flush_resp_size > max_msg_size) {
+	if (flush_resp_size > sd->max_msg_size) {
 		log_err("Size of the packed flush response is bigger than the available space of the send buffer (%"
-			PRIu64 " > %zu\n", flush_resp_size, max_msg_size);
+			PRIu64 " > %zu\n", flush_resp_size, sd->max_msg_size);
 		goto err_terminate;
 	}
 
