@@ -605,11 +605,13 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* prepare buffers for a flush requests */
 	size_recv_msg = td_max_bs(td) / 2;
-	for (i = 0; i < td->o.iodepth; i++)
+	for (i = 0; i < td->o.iodepth; i++) {
+		size_t offset_recv_msg = (2 * i + 1) * size_recv_msg;
 		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
-				(2 * i + 1) * size_recv_msg,
-				size_recv_msg, NULL)))
+				offset_recv_msg, size_recv_msg,
+				sd->orig_buffer_aligned + offset_recv_msg)))
 			goto err_req_delete;
+	}
 
 	/* accept the connection request and obtain the connection object */
 	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
@@ -701,9 +703,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	size_t flush_resp_size = 0;
 	size_t max_msg_size;
 	size_t send_offset;
-	size_t recv_offset;
 	void *send_ptr;
-	void *recv_ptr;
 	void *op_ptr;
 	int ret;
 
@@ -717,9 +717,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 
 	max_msg_size = io_u->xfer_buflen / 2;
 	send_offset = 0;
-	recv_offset = max_msg_size;
 	send_ptr = (char *)io_u->xfer_buf + send_offset;
-	recv_ptr = (char *)io_u->xfer_buf + recv_offset;
 
 	/* wait for the completion to be ready */
 	if ((ret = rpma_conn_completion_wait(sd->conn)))
@@ -728,7 +726,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		goto err_terminate;
 
 	/* unpack a flush request from the received buffer */
-	flush_req = gpspm_flush_request__unpack(NULL, cmpl.byte_len, recv_ptr);
+	flush_req = gpspm_flush_request__unpack(NULL, cmpl.byte_len, cmpl.op_context);
 	if (flush_req == NULL) {
 		log_err("cannot unpack the flush request buffer\n");
 		goto err_terminate;
