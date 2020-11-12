@@ -536,7 +536,7 @@ static int server_post_init(struct thread_data *td)
 {
 	struct server_data *sd = td->io_ops_data;
 	size_t io_us_size;
-	size_t msg_size;
+	size_t io_u_buflen;
 	int ret;
 
 	/*
@@ -551,13 +551,13 @@ static int server_post_init(struct thread_data *td)
 	 * Each io_u message buffer contains recv and send messages.
 	 * Aligning each of those buffers may potentially give some performance benefits.
 	 */
-	msg_size = td_max_bs(td);
+	io_u_buflen = td_max_bs(td);
 
 	/*
 	 * td->orig_buffer_size beside the space really consumed by io_us
 	 * has paddings which can be omitted for the memory registration.
 	 */
-	io_us_size = (unsigned long long)msg_size *
+	io_us_size = (unsigned long long)io_u_buflen *
 			(unsigned long long)td->o.iodepth;
 
 	ret = rpma_mr_reg(sd->peer, sd->orig_buffer_aligned, io_us_size,
@@ -603,7 +603,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_ep *ep;
 	size_t mr_desc_size;
 	size_t mmap_size = 0;
-	size_t msg_size;
+	size_t size_recv_msg;
 	void *mmap_ptr;
 	int mmap_is_pmem;
 	int ret;
@@ -667,10 +667,11 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_ep_shutdown;
 
 	/* prepare buffers for a flush requests */
-	msg_size = td_max_bs(td);
+	size_recv_msg = td_max_bs(td) / 2;
 	for (i = 0; i < td->o.iodepth; i++)
 		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
-				i * msg_size, msg_size, NULL)))
+				(2 * i + 1) * size_recv_msg,
+				size_recv_msg, NULL)))
 			goto err_req_delete;
 
 	/* accept the connection request and obtain the connection object */
@@ -719,34 +720,126 @@ err_pmem_unmap:
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
 	struct server_data *sd =  td->io_ops_data;
-	int ret1, ret2;
-	int ret3 = 0;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
+	int ret;
+	int rv;
 
-	if ((ret1 = rpma_conn_delete(&sd->conn)))
-		rpma_td_verror(td, ret1, "rpma_conn_delete");
+	/* wait for the connection to be closed */
+	ret = rpma_conn_next_event(sd->conn, &conn_event);
+	if (!ret && conn_event != RPMA_CONN_CLOSED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		rv = 1;
+	}
 
-	if ((ret2 = rpma_mr_dereg(&sd->mmap_mr)))
-		rpma_td_verror(td, ret2, "rpma_mr_dereg");
+	if ((ret = rpma_conn_disconnect(sd->conn))) {
+		rpma_td_verror(td, ret, "rpma_conn_disconnect");
+		rv |= ret;
+	}
+
+	if ((ret = rpma_conn_delete(&sd->conn))) {
+		rpma_td_verror(td, ret, "rpma_conn_delete");
+		rv |= ret;
+	}
+
+	if ((ret = rpma_mr_dereg(&sd->mmap_mr))) {
+		rpma_td_verror(td, ret, "rpma_mr_dereg");
+		rv |= ret;
+	}
 
 	if (pmem_unmap(sd->mmap_ptr, sd->mmap_size)) {
 		td_verror(td, errno, "pmem_unmap");
-		ret3 = errno;
+		rv |= errno;
 	}
 
-	return (ret1 | ret2 | ret3) ? -1 : 0;
+	return rv ? -1 : 0;
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
+	struct server_data *sd =  td->io_ops_data;
+	struct rpma_completion cmpl;
+	GPSPMFlushRequest *flush_req;
+	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
+	size_t flush_resp_size = 0;
+	size_t max_msg_size;
+	size_t send_offset;
+	size_t recv_offset;
+	void *send_ptr;
+	void *recv_ptr;
+	void *op_ptr;
+	int ret;
+
 	/*
-	 * - rpma_conn_completion_wait()
-	 * - rpma_conn_completion_get()
-	 * - pmem_persist(f, NULL);
-	 * - rpma_recv() to prepare for next incoming receive
-	 * - rpma_send(the response)
+	 * XXX
+	 * The server handles only one io_us for now (it should handle multiple io_us).
+	 * It is a temporary solution, we expect to change it in the future.
+	 * A new message can be defined that will be sent when the client is done,
+	 * so the server will transition to the cleanup stage.
 	 */
-	return FIO_Q_BUSY;
+
+	max_msg_size = io_u->xfer_buflen / 2;
+	send_offset = 0;
+	recv_offset = max_msg_size;
+	send_ptr = (char *)io_u->xfer_buf + send_offset;
+	recv_ptr = (char *)io_u->xfer_buf + recv_offset;
+
+	/* wait for the completion to be ready */
+	if ((ret = rpma_conn_completion_wait(sd->conn)))
+		goto err_terminate;
+	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
+		goto err_terminate;
+
+	/* unpack a flush request from the received buffer */
+	flush_req = gpspm_flush_request__unpack(NULL, cmpl.byte_len, recv_ptr);
+	if (flush_req == NULL) {
+		log_err("cannot unpack the flush request buffer\n");
+		goto err_terminate;
+	}
+
+	op_ptr = (char *)sd->mmap_ptr + flush_req->offset;
+	pmem_persist(op_ptr, flush_req->length);
+
+	/* prepare a flush response and pack it to a send buffer */
+	flush_resp.op_context = flush_req->op_context;
+	flush_resp_size = gpspm_flush_response__get_packed_size(&flush_resp);
+	if (flush_resp_size > max_msg_size) {
+		log_err("Size of the packed flush response is bigger than the available space of the send buffer (%"
+			PRIu64 " > %zu\n", flush_resp_size, max_msg_size);
+		goto err_terminate;
+	}
+
+	(void) gpspm_flush_response__pack(&flush_resp, send_ptr);
+	gpspm_flush_request__free_unpacked(flush_req, NULL);
+
+	/* send the flush response */
+	if ((ret = rpma_send(sd->conn, sd->msg_mr, send_offset, flush_resp_size,
+			RPMA_F_COMPLETION_ALWAYS, NULL)))
+		goto err_terminate;
+
+	/* wait for the completion to be ready */
+	if ((ret = rpma_conn_completion_wait(sd->conn)))
+		goto err_terminate;
+	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
+		goto err_terminate;
+
+	/* validate the completion */
+	if (cmpl.op_status != IBV_WC_SUCCESS)
+		goto err_terminate;
+	if (cmpl.op != RPMA_OP_SEND) {
+		log_err("unexpected cmpl.op value (0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
+			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_SEND);
+		goto err_terminate;
+	}
+
+	td->done = true;
+
+	return FIO_Q_COMPLETED;
+
+err_terminate:
+	td->terminate = true;
+
+	return FIO_Q_COMPLETED;
 }
 
 static int server_invalidate(struct thread_data *td, struct fio_file *file)
