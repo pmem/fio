@@ -29,8 +29,13 @@
 
 /* client's and server's common */
 
-/* XXX a private data structure borrowed from RPMA examples */
+/*
+ * Limited by the maximum length of the private data
+ * for rdma_connect() in case of RDMA_PS_TCP (56 bytes).
+ */
 #define DESCRIPTORS_MAX_SIZE 24
+
+/* XXX a private data structure borrowed from RPMA examples */
 struct example_common_data {
 	uint16_t data_offset;	/* user data offset */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
@@ -403,10 +408,18 @@ static struct fio_option fio_server_options[] = {
 
 struct server_data {
 	struct rpma_peer *peer;
-	struct rpma_ep *ep;
 
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
+
+	/* resources of an incoming connection */
+	struct rpma_conn *conn;
+
+	/* memory mapped from a file */
+	void *mmap_ptr;
+	/* size of the mapped memory from a file */
+	size_t mmap_size;
+	struct rpma_mr_local *mmap_mr;
 
 	/* resources for messaging buffer from DRAM allocated by fio */
 	struct rpma_mr_local *msg_mr;
@@ -446,19 +459,9 @@ static int server_init(struct thread_data *td)
 		goto err_free_sd;
 	}
 
-	/* start a listening endpoint at addr:port */
-	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &sd->ep);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_ep_listen");
-		goto err_peer_delete;
-	}
-
 	td->io_ops_data = sd;
 
 	return 0;
-
-err_peer_delete:
-	(void) rpma_peer_delete(&sd->peer);
 
 err_free_sd:
 	free(sd);
@@ -517,10 +520,6 @@ static void server_cleanup(struct thread_data *td)
 	if ((ret = rpma_mr_dereg(&sd->msg_mr)))
 		rpma_td_verror(td, ret, "rpma_mr_dereg");
 
-	/* shutdown the endpoint */
-	if ((ret = rpma_ep_shutdown(&sd->ep)))
-		rpma_td_verror(td, ret, "rpma_ep_shutdown");
-
 	/* free the peer */
 	if ((ret = rpma_peer_delete(&sd->peer)))
 		rpma_td_verror(td, ret, "rpma_peer_delete");
@@ -530,27 +529,146 @@ static void server_cleanup(struct thread_data *td)
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
-	/*
-	 * - pmem_map_file()
-	 * - rpma_mr_reg(PMem)
-	 * - rpma_mr_get_descriptor_size
-	 * - verify size of the memory region's descriptor
-	 * - rpma_mr_get_descriptor
-	 * - rpma_ep_next_conn_req()
-	 * - rpma_recv()
-	 * - rpma_conn_connect(pmem's memory region)
-	 */
+	struct server_data *sd =  td->io_ops_data;
+	struct server_options *o = td->eo;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
+	struct rpma_conn_private_data pdata;
+	struct rpma_mr_local *mmap_mr;
+	struct example_common_data data;
+	struct rpma_conn_req *conn_req;
+	struct rpma_conn *conn;
+	struct rpma_ep *ep;
+	size_t mr_desc_size;
+	size_t mmap_size = 0;
+	size_t msg_size;
+	void *mmap_ptr;
+	int mmap_is_pmem;
+	int ret;
+	int i;
+
+	if (!f->file_name) {
+		log_err("fio: filename is not set\n");
+		return 1;
+	}
+
+	/* map the file */
+	mmap_ptr = pmem_map_file(f->file_name, 0 /* len */, 0 /* flags */,
+			0 /* mode */, &mmap_size, &mmap_is_pmem);
+	if (mmap_ptr == NULL) {
+		log_err("fio: pmem_map_file(%s) failed\n", f->file_name);
+		/* pmem_map_file() sets errno on failure */
+		td_verror(td, errno, "pmem_map_file");
+		return 1;
+	}
+
+	if (!mmap_is_pmem)
+		log_info("fio: %s is not located in persistent memory\n",
+			f->file_name);
+
+	log_info("fio: size of memory mapped from the file %s: %zu\n",
+		f->file_name, mmap_size);
+
+	ret = rpma_mr_reg(sd->peer, mmap_ptr, mmap_size,
+			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
+			&mmap_mr);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_mr_reg");
+		goto err_pmem_unmap;
+	}
+
+	/* get size of the memory region's descriptor */
+	ret = rpma_mr_get_descriptor_size(mmap_mr, &mr_desc_size);
+	if (ret)
+		goto err_mr_dereg;
+
+	/* get the memory region's descriptor */
+	if ((ret = rpma_mr_get_descriptor(mmap_mr, &data.descriptors[0])))
+		goto err_mr_dereg;
+
+	/* calculate data for the server read */
+	data.mr_desc_size = mr_desc_size;
+	data.data_offset = 0;
+	pdata.ptr = &data;
+	pdata.len = sizeof(struct example_common_data);
+
+	/* start a listening endpoint at addr:port */
+	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &ep);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_listen");
+		goto err_mr_dereg;
+	}
+
+	/* receive an incoming connection request */
+	if ((ret = rpma_ep_next_conn_req(ep, NULL, &conn_req)))
+		goto err_ep_shutdown;
+
+	/* prepare buffers for a flush requests */
+	msg_size = td_max_bs(td);
+	for (i = 0; i < td->o.iodepth; i++)
+		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
+				i * msg_size, msg_size, NULL)))
+			goto err_req_delete;
+
+	/* accept the connection request and obtain the connection object */
+	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
+		goto err_conn_delete;
+
+	/* wait for the connection to be established */
+	ret = rpma_conn_next_event(sd->conn, &conn_event);
+	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		ret = 1;
+	}
+	if (ret)
+		goto err_conn_delete;
+
+	/* end-point is no longer needed */
+	(void) rpma_ep_shutdown(&ep);
+
+	sd->mmap_mr = mmap_mr;
+	sd->mmap_ptr = mmap_ptr;
+	sd->mmap_size = mmap_size;
+	sd->conn = conn;
 
 	return 0;
+
+err_conn_delete:
+	(void) rpma_conn_delete(&conn);
+
+err_req_delete:
+	(void) rpma_conn_req_delete(&conn_req);
+
+err_ep_shutdown:
+	(void) rpma_ep_shutdown(&ep);
+
+err_mr_dereg:
+	(void) rpma_mr_dereg(&mmap_mr);
+
+err_pmem_unmap:
+	(void) pmem_unmap(mmap_ptr, mmap_size);
+
+	return ret;
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	/*
-	 * - rpma_mr_dereg(PMem)
-	 * - FILE_SET_ENG_DATA(f, NULL);
-	 */
-	return 0;
+	struct server_data *sd =  td->io_ops_data;
+	int ret1, ret2;
+	int ret3 = 0;
+
+	if ((ret1 = rpma_conn_delete(&sd->conn)))
+		rpma_td_verror(td, ret1, "rpma_conn_delete");
+
+	if ((ret2 = rpma_mr_dereg(&sd->mmap_mr)))
+		rpma_td_verror(td, ret2, "rpma_mr_dereg");
+
+	if (pmem_unmap(sd->mmap_ptr, sd->mmap_size)) {
+		td_verror(td, errno, "pmem_unmap");
+		ret3 = errno;
+	}
+
+	return (ret1 | ret2 | ret3) ? -1 : 0;
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,
