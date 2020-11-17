@@ -817,14 +817,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	int msg_index;
 	int ret;
 
-	/*
-	 * XXX
-	 * The server handles only one io_us for now (it should handle multiple io_us).
-	 * It is a temporary solution, we expect to change it in the future.
-	 * A new message can be defined that will be sent when the client is done,
-	 * so the server will transition to the cleanup stage.
-	 */
-
 	/* wait for the completion to be ready */
 	if ((ret = rpma_conn_completion_wait(sd->conn)))
 		goto err_terminate;
@@ -844,8 +836,16 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		goto err_terminate;
 	}
 
-	op_ptr = (char *)sd->mmap_ptr + flush_req->offset;
-	pmem_persist(op_ptr, flush_req->length);
+	if (flush_req->length) {
+		op_ptr = (char *)sd->mmap_ptr + flush_req->offset;
+		pmem_persist(op_ptr, flush_req->length);
+	} else {
+		/*
+		 * flush_req->length == 0 means that the client is done
+		 * and this is the last message.
+		 */
+		td->done = true;
+	}
 
 	/* prepare a flush response and pack it to a send buffer */
 	flush_resp.op_context = flush_req->op_context;
@@ -878,8 +878,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_SEND);
 		goto err_terminate;
 	}
-
-	td->done = true;
 
 	return FIO_Q_COMPLETED;
 
