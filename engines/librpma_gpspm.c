@@ -51,6 +51,9 @@ struct example_common_data {
 
 /* client side implementation */
 
+#define IO_U_BUF_OFF_CLIENT(td, i) \
+    (IO_U_BUF_LEN * (((i) + (td)->o.iodepth_batch - 1) / (td)->o.iodepth_batch))
+
 struct client_options {
 	/*
 	 * FIO considers .off1 == 0 absent so the first meaningful field has to
@@ -100,7 +103,7 @@ struct client_data {
 	/* ious's base address memory registration (cd->orig_buffer_aligned) */
 	struct rpma_mr_local *orig_mr;
 
-	/* memory for sending and reciving buffered */
+	/* memory for sending and receiving buffered */
 	char *io_us_msgs;
 
 	/* resources for messaging buffer */
@@ -297,7 +300,7 @@ static int client_post_init(struct thread_data *td)
 	io_us_msgs_size = ((td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch) * IO_U_BUF_LEN;
 
 	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
-			page_mask, io_us_msgs_size))) {
+			page_size, io_us_msgs_size))) {
 		td_verror(td, ret, "posix_memalign");
 		return ret;
 	}
@@ -430,36 +433,258 @@ static enum fio_q_status client_queue(struct thread_data *td,
 
 static int client_commit(struct thread_data *td)
 {
-	/*
-	 * - execute all io_us from queued[]
-	 * - move executed io_us to flight[]
-	 */
+	struct client_data *cd = td->io_ops_data;
+	struct timespec now;
+	bool fill_time;
+	size_t io_u_buf_off;
+	size_t send_offset;
+	size_t recv_offset;
+	void *send_ptr;
+	void *recv_ptr;
+	GPSPMFlushRequest flush_req = GPSPM_FLUSH_REQUEST__INIT;
+	size_t flush_req_size = 0;
+	int ret;
+	int i;
+
+	if (!cd->io_us_queued)
+		return -1;
+
+	/* execute all io_us from queued[] */
+	for (i = 0; i < cd->io_u_queued_nr; i++) {
+		struct io_u *io_u = cd->io_us_queued[i];
+
+		io_u_buf_off = IO_U_BUF_OFF_CLIENT(td, i);
+		send_offset = io_u_buf_off + SEND_OFFSET;
+		recv_offset = io_u_buf_off + RECV_OFFSET;
+		send_ptr = cd->io_us_msgs + send_offset;
+		recv_ptr = cd->io_us_msgs + recv_offset;
+
+		if (io_u->ddir == DDIR_WRITE) {
+			/* post an RDMA write operation */
+			size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+			size_t dst_offset = io_u->offset;
+			if (i == 0)
+				flush_req.offset = dst_offset;
+			
+			flush_req.length += io_u->xfer_buflen;
+
+			ret = rpma_write(cd->conn,
+					cd->server_mr, dst_offset,
+					cd->orig_mr, src_offset,
+					io_u->xfer_buflen,
+					RPMA_F_COMPLETION_ON_ERROR,
+					(void *)(uintptr_t)io_u->index);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_write");
+				return -1;
+			}
+
+			if (i != cd->io_u_queued_nr - 1)
+				continue;
+
+			/* prepare a response buffer */
+			ret = rpma_recv(cd->conn,
+					cd->msg_mr, recv_offset,
+					MAX_MSG_SIZE,
+					recv_ptr);
+			if (ret) {
+				rpma_td_verror(td, ret, "rpma_read");
+				return -1;
+			}
+
+			/* prepare a flush message and pack it to a send buffer */
+			flush_req.op_context = io_u->index;
+			flush_req_size = gpspm_flush_request__get_packed_size(&flush_req);
+			if (flush_req_size > MAX_MSG_SIZE) {
+				log_err(
+					"Packed flush request size is bigger than available send buffer space (%"
+					PRIu64 " > %d\n", flush_req_size,
+					MAX_MSG_SIZE);
+				return -1;
+			}
+			(void) gpspm_flush_request__pack(&flush_req, send_ptr);
+
+			/* send the flush message */
+			if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
+				RPMA_F_COMPLETION_ON_ERROR, NULL)))
+				rpma_td_verror(td, ret, "rpma_send");
+		} else {
+			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
+			return -1;
+		}
+	}
+
+	if ((fill_time = fio_fill_issue_time(td)))
+		fio_gettime(&now, NULL);
+
+	/* move executed io_us from queued[] to flight[] */
+	for (i = 0; i < cd->io_u_queued_nr; i++) {
+		struct io_u *io_u = cd->io_us_queued[i];
+
+		/* FIO does not do this if the engine is asynchronous */
+		if (fill_time)
+			memcpy(&io_u->issue_time, &now, sizeof(now));
+
+		/* move executed io_us from queued[] to flight[] */
+		cd->io_us_flight[cd->io_u_flight_nr] = io_u;
+		cd->io_u_flight_nr++;
+
+		/*
+		 * FIO says:
+		 * If an engine has the commit hook it has to call io_u_queued() itself.
+		 */
+		io_u_queued(td, io_u);
+	}
+
+	/* FIO does not do this if an engine has the commit hook. */
+	io_u_mark_submit(td, cd->io_u_queued_nr);
+	cd->io_u_queued_nr = 0;
+
 	return 0;
+}
+
+static int client_getevent_process(struct thread_data *td)
+{
+	struct client_data *cd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	unsigned int io_us_error = 0;
+	/* io_u->index of completed io_u (cmpl.op_context) */
+	unsigned int io_u_index;
+	/* # of completed io_us */
+	int cmpl_num = 0;
+	/* helpers */
+	struct io_u *io_u;
+	GPSPMFlushResponse *flush_resp;
+	int i;
+	int ret;
+
+	/* get a completion */
+	if ((ret = rpma_conn_completion_get(cd->conn, &cmpl))) {
+		/* lack of completion is not an error */
+		if (ret == RPMA_E_NO_COMPLETION)
+			return 0;
+
+		/* an error occurred */
+		rpma_td_verror(td, ret, "rpma_conn_completion_get");
+		return -1;
+	}
+
+	/* if io_us has completed with an error */
+	if (cmpl.op_status != IBV_WC_SUCCESS)
+		io_us_error = cmpl.op_status;
+
+	/* unpack a response from the received buffer */
+	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
+			cmpl.op_context);
+	if (flush_resp == NULL) {
+		log_err("Cannot unpack the flush response buffer\n");
+		return -1;
+	}
+	gpspm_flush_response__free_unpacked(flush_resp, NULL);
+
+	/* look for an io_u being completed */
+	memcpy(&io_u_index, &flush_resp->op_context, sizeof(unsigned int));
+	for (i = 0; i < cd->io_u_flight_nr; ++i) {
+		if (cd->io_us_flight[i]->index == io_u_index) {
+			cmpl_num = i + 1;
+			break;
+		}
+	}
+
+	/* if no matching io_u has been found */
+	if (cmpl_num == 0) {
+		log_err(
+			"no matching io_u for received completion found (io_u_index=%u)\n",
+			io_u_index);
+		return -1;
+	}
+
+	/* move completed io_us to the completed in-memory queue */
+	for (i = 0; i < cmpl_num; ++i) {
+		/* get and prepare io_u */
+		io_u = cd->io_us_flight[i];
+		io_u->error = io_us_error;
+
+		/* append to the queue */
+		cd->io_us_completed[cd->io_u_completed_nr] = io_u;
+		cd->io_u_completed_nr++;
+	}
+
+	/* remove completed io_us from the flight queue */
+	for (i = cmpl_num; i < cd->io_u_flight_nr; ++i)
+		cd->io_us_flight[i - cmpl_num] = cd->io_us_flight[i];
+	cd->io_u_flight_nr -= cmpl_num;
+
+	return cmpl_num;
 }
 
 static int client_getevents(struct thread_data *td, unsigned int min,
 				unsigned int max, const struct timespec *t)
 {
-	/*
-	 * - wait for a completion
-	 * - move completed io_us to completed[]
-	 * - return # of io_us completed with collected completion
-	 */
-	return 0;
+	struct client_data *cd = td->io_ops_data;
+	/* total # of completed io_us */
+	int cmpl_num_total = 0;
+	/* # of completed io_us from a single event */
+	int cmpl_num;
+	int ret;
+
+	do {
+		cmpl_num = client_getevent_process(td);
+		if (cmpl_num > 0) {
+			/* new completions collected */
+			cmpl_num_total += cmpl_num;
+		} else if (cmpl_num == 0) {
+			if (cmpl_num_total >= min)
+				break;
+
+			/* too few completions - wait */
+			ret = rpma_conn_completion_wait(cd->conn);
+			if (ret == 0 || ret == RPMA_E_NO_COMPLETION)
+				continue;
+
+			/* an error occurred */
+			rpma_td_verror(td, ret, "rpma_conn_completion_wait");
+			return -1;
+		} else {
+			/* an error occurred */
+			return -1;
+		}
+	} while (cmpl_num_total < max);
+
+	return cmpl_num_total;
 }
 
 static struct io_u *client_event(struct thread_data *td, int event)
 {
-	/*
-	 * - take io_us from completed[] (at the end it should be empty)
-	 */
-	return 0;
+	struct client_data *cd = td->io_ops_data;
+	struct io_u *io_u;
+	int i;
+
+	/* get the first io_u from the queue */
+	io_u = cd->io_us_completed[0];
+
+	/* remove the first io_u from the queue */
+	for (i = 1; i < cd->io_u_completed_nr; ++i)
+		cd->io_us_completed[i - 1] = cd->io_us_completed[i];
+	cd->io_u_completed_nr--;
+
+	dprint_io_u(io_u, "client_event");
+
+	return io_u;
 }
 
 static char *client_errdetails(struct io_u *io_u)
 {
-	/* XXX */
-	return 0;
+	/* get the string representation of an error */
+	enum ibv_wc_status status = io_u->error;
+	const char *status_str = ibv_wc_status_str(status);
+
+	/* allocate and copy the error string representation */
+	char *details = malloc(strlen(status_str) + 1);
+	strcpy(details, status_str);
+
+	/* FIO frees the returned string when it becomes obsolete */
+	return details;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
