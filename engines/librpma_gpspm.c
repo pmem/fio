@@ -385,8 +385,15 @@ static void client_cleanup(struct thread_data *td)
 
 static int client_get_file_size(struct thread_data *td, struct fio_file *f)
 {
-	/* XXX */
-	return 0;
+	struct client_data *cd = td->io_ops_data;
+	int ret;
+
+	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &f->real_file_size)))
+		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+
+	fio_file_set_size_known(f);
+
+	return ret;
 }
 
 static int client_open_file(struct thread_data *td, struct fio_file *f)
@@ -404,10 +411,18 @@ static int client_close_file(struct thread_data *td, struct fio_file *f)
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
-	/*
-	 * - add io_u to queued[] array
-	 */
-	return FIO_Q_BUSY;
+	struct client_data *cd = td->io_ops_data;
+
+	if (cd->io_u_queued_nr == (int)td->o.iodepth)
+		return FIO_Q_BUSY;
+
+	/* XXX - implement synchronous variant */
+
+	/* io_u -> queued[] */
+	cd->io_us_queued[cd->io_u_queued_nr] = io_u;
+	cd->io_u_queued_nr++;
+
+	return FIO_Q_QUEUED;
 }
 
 static int client_commit(struct thread_data *td)
