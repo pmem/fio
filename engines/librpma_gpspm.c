@@ -34,6 +34,20 @@
 #define SEND_OFFSET (0)
 #define RECV_OFFSET (SEND_OFFSET + MAX_MSG_SIZE)
 
+#define GPSPM_FLUSH_REQUEST__LAST \
+	{ PROTOBUF_C_MESSAGE_INIT (&gpspm_flush_request__descriptor), 0, 0, 0 }
+
+/*
+ * 'Flush_req_last' is the last flush request
+ * the client has to send to server to indicate
+ * that the client is done.
+ */
+static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
+
+#define IS_NOT_THE_LAST_MESSAGE(flush_req) \
+	(flush_req->length != Flush_req_last.length || \
+	flush_req->offset != Flush_req_last.offset)
+
 /*
  * Limited by the maximum length of the private data
  * for rdma_connect() in case of RDMA_PS_TCP (56 bytes).
@@ -835,14 +849,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	int msg_index;
 	int ret;
 
-	/*
-	 * XXX
-	 * The server handles only one io_us for now (it should handle multiple io_us).
-	 * It is a temporary solution, we expect to change it in the future.
-	 * A new message can be defined that will be sent when the client is done,
-	 * so the server will transition to the cleanup stage.
-	 */
-
 	/* wait for the completion to be ready */
 	if ((ret = rpma_conn_completion_wait(sd->conn)))
 		goto err_terminate;
@@ -871,8 +877,15 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		goto err_terminate;
 	}
 
-	op_ptr = (char *)sd->mmap_ptr + flush_req->offset;
-	pmem_persist(op_ptr, flush_req->length);
+	if (IS_NOT_THE_LAST_MESSAGE(flush_req)) {
+		op_ptr = (char *)sd->mmap_ptr + flush_req->offset;
+		pmem_persist(op_ptr, flush_req->length);
+	} else {
+		/*
+		 * This is the last message - the client is done.
+		 */
+		td->done = true;
+	}
 
 	/* prepare a flush response and pack it to a send buffer */
 	flush_resp.op_context = flush_req->op_context;
@@ -905,8 +918,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_SEND);
 		goto err_terminate;
 	}
-
-	td->done = true;
 
 	return FIO_Q_COMPLETED;
 
