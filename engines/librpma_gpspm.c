@@ -349,11 +349,31 @@ static int client_post_init(struct thread_data *td)
 static void client_cleanup(struct thread_data *td)
 {
 	struct client_data *cd = td->io_ops_data;
+	size_t flush_req_size;
+	size_t send_offset;
+	void *send_ptr;
 	enum rpma_conn_event ev;
 	int ret;
 
 	if (cd == NULL)
 		return;
+
+	/* prepare the last flush message and pack it to the send buffer */
+	flush_req_size = gpspm_flush_request__get_packed_size(&Flush_req_last);
+	if (flush_req_size > MAX_MSG_SIZE) {
+		log_err(
+			"Packed flush request size is bigger than available send buffer space (%zu > %d\n",
+			flush_req_size,	MAX_MSG_SIZE);
+	}
+
+	send_offset = 0;
+	send_ptr = cd->io_us_msgs + send_offset;
+	(void) gpspm_flush_request__pack(&Flush_req_last, send_ptr);
+
+	/* send the flush message */
+	if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
+				RPMA_F_COMPLETION_ON_ERROR, NULL)))
+		rpma_td_verror(td, ret, "rpma_send");
 
 	/* deregister the iou's memory */
 	if ((ret = rpma_mr_dereg(&cd->orig_mr)))
