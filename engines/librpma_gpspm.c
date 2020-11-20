@@ -887,6 +887,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		 * This is the last message - the client is done.
 		 */
 		td->done = true;
+		return FIO_Q_COMPLETED;
 	}
 
 	/* initiate the next receive operation */
