@@ -849,6 +849,15 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
 		goto err_terminate;
 
+	/* validate the completion */
+	if (cmpl.op_status != IBV_WC_SUCCESS)
+		goto err_terminate;
+	if (cmpl.op != RPMA_OP_RECV) {
+		log_err("unexpected completion (0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
+			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_RECV);
+		goto err_terminate;
+	}
+
 	msg_index = (int)(uintptr_t)cmpl.op_context;
 	io_u_buf_offset = IO_U_BUF_OFF_SERVER(msg_index);
 	send_buf_offset = io_u_buf_offset + SEND_OFFSET;
@@ -892,7 +901,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	if (cmpl.op_status != IBV_WC_SUCCESS)
 		goto err_terminate;
 	if (cmpl.op != RPMA_OP_SEND) {
-		log_err("unexpected cmpl.op value (0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
+		log_err("unexpected completion (0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
 			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_SEND);
 		goto err_terminate;
 	}
