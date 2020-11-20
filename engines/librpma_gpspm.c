@@ -842,6 +842,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
 	size_t flush_resp_size = 0;
 	size_t send_buf_offset;
+	size_t recv_buf_offset;
 	size_t io_u_buf_offset;
 	void *send_ptr;
 	void *recv_ptr;
@@ -867,8 +868,9 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	msg_index = (int)(uintptr_t)cmpl.op_context;
 	io_u_buf_offset = IO_U_BUF_OFF_SERVER(msg_index);
 	send_buf_offset = io_u_buf_offset + SEND_OFFSET;
+	recv_buf_offset = io_u_buf_offset + RECV_OFFSET;
 	send_ptr = sd->orig_buffer_aligned + send_buf_offset;
-	recv_ptr = sd->orig_buffer_aligned + io_u_buf_offset + RECV_OFFSET;
+	recv_ptr = sd->orig_buffer_aligned + recv_buf_offset;
 
 	/* unpack a flush request from the received buffer */
 	flush_req = gpspm_flush_request__unpack(NULL, cmpl.byte_len, recv_ptr);
@@ -885,6 +887,14 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		 * This is the last message - the client is done.
 		 */
 		td->done = true;
+	}
+
+	/* initiate the next receive operation */
+	ret = rpma_recv(sd->conn, sd->msg_mr, recv_buf_offset,
+			MAX_MSG_SIZE, (const void *)(uintptr_t)msg_index);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_recv");
+		goto err_terminate;
 	}
 
 	/* prepare a flush response and pack it to a send buffer */
