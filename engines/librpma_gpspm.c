@@ -930,23 +930,8 @@ static enum fio_q_status server_queue(struct thread_data *td,
 
 	/* send the flush response */
 	if ((ret = rpma_send(sd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
-			RPMA_F_COMPLETION_ALWAYS, NULL)))
+			RPMA_F_COMPLETION_ON_ERROR, NULL)))
 		goto err_terminate;
-
-	/* wait for the completion to be ready */
-	if ((ret = rpma_conn_completion_wait(sd->conn)))
-		goto err_terminate;
-	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
-		goto err_terminate;
-
-	/* validate the completion */
-	if (cmpl.op_status != IBV_WC_SUCCESS)
-		goto err_terminate;
-	if (cmpl.op != RPMA_OP_SEND) {
-		log_err("unexpected completion (0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
-			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_SEND);
-		goto err_terminate;
-	}
 
 	return FIO_Q_COMPLETED;
 
