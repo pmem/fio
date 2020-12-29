@@ -508,6 +508,24 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int
 	return 0;
 }
 
+static inline int client_io_flush(struct thread_data *td,
+		struct io_u *first_io_u, struct io_u *last_io_u,
+		unsigned long long int len)
+{
+	struct client_data *cd = td->io_ops_data;
+	size_t dst_offset = cd->ws_offset + first_io_u->offset;
+
+	int ret = rpma_flush(cd->conn, cd->server_mr, dst_offset, len,
+		cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
+		(void *)(uintptr_t)last_io_u->index);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_flush");
+		return -1;
+	}
+
+	return 0;
+}
+
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
@@ -526,10 +544,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 		/* post an RDMA write operation */
 		if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
 			goto err;
-		if ((ret = rpma_flush(cd->conn, cd->server_mr,
-				io_u->offset, io_u->xfer_buflen,
-				cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
-				(void *)(uintptr_t)io_u->index)))
+		if ((ret = client_io_flush(td, io_u, io_u, io_u->xfer_buflen)))
 			goto err;
 	} else {
 		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
@@ -641,15 +656,9 @@ static int client_commit(struct thread_data *td)
 			}
 
 			/* flush all writes which build a continuous sequence */
-			ret = rpma_flush(cd->conn, cd->server_mr,
-				cd->ws_offset + flush_first_io_u->offset,
-				flush_len, cd->flush_type,
-				RPMA_F_COMPLETION_ALWAYS,
-				(void *)(uintptr_t)io_u->index);
-			if (ret) {
-				rpma_td_verror(td, ret, "rpma_flush");
+			ret = client_io_flush(td, flush_first_io_u, io_u, flush_len);
+			if (ret)
 				return -1;
-			}
 
 			/*
 			 * reset the flush parameters in preparation for
