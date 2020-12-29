@@ -20,6 +20,6 @@ group_reporting=1
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 iodepth=[total # of ious]
 iodepth_batch_submit=[# of ious to submit at once]
-readwrite=[read/randread]
+readwrite=[read/write/randread/randwrite/readwrite/rw]
 blocksize=[block size]
 size=[XXX a space for a single thread?]
