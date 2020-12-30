@@ -52,14 +52,13 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
  * Limited by the maximum length of the private data
  * for rdma_connect() in case of RDMA_PS_TCP (56 bytes).
  */
-#define DESCRIPTORS_MAX_SIZE 24
+#define DESCRIPTORS_MAX_SIZE 23
 
 /* XXX a private data structure borrowed from RPMA examples */
-struct example_common_data {
-	uint16_t data_offset;	/* user data offset */
+struct workspace {
+	uint32_t size;		/* size of workspace for a single connection */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
-	uint8_t pcfg_desc_size;	/* size of pcfg_desc in descriptors[] */
-	/* buffer containing mr_desc and pcfg_desc */
+	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
 };
 
@@ -123,6 +122,10 @@ struct client_data {
 	/* resources for messaging buffer */
 	struct rpma_mr_local *msg_mr;
 
+	/* remote workspace description */
+	size_t ws_offset;
+	size_t ws_size;
+
 	/* in-memory queues */
 	struct io_u **io_us_queued;
 	int io_u_queued_nr;
@@ -142,7 +145,8 @@ static int client_init(struct thread_data *td)
 	enum rpma_conn_event event;
 	uint32_t cq_size;
 	struct rpma_conn_private_data pdata;
-	struct example_common_data *data;
+	struct workspace *ws;
+	size_t server_mr_size;
 	int ret = 1;
 
 	/* configure logging thresholds to see more details */
@@ -265,11 +269,42 @@ static int client_init(struct thread_data *td)
 		goto err_conn_delete;
 
 	/* create the server's memory representation */
-	data = pdata.ptr;
-	if ((ret = rpma_mr_remote_from_descriptor(&data->descriptors[0],
-			data->mr_desc_size, &cd->server_mr)))
+	ws = pdata.ptr;
+
+	/* validate the received workspace size */
+	if (ws->size < td->o.size) {
+		log_err(
+			"received workspace size is too small (%u < %llu)\n",
+			ws->size, td->o.size);
+		goto err_conn_delete;
+	}
+
+	/* create the server's memory representation */
+	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
+			ws->mr_desc_size, &cd->server_mr)))
 		goto err_conn_delete;
 
+	/* get the total size of the shared server memory */
+	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
+		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+		goto err_conn_delete;
+	}
+
+	/* validate the received workspace size */
+	cd->ws_offset = (td->thread_number - 1) * ws->size;
+	if (cd->ws_offset > server_mr_size) {
+		log_err(
+			"the workspace starts beyond the memory region (%zu > %zu)\n",
+			cd->ws_offset, server_mr_size);
+		goto err_conn_delete;
+	} else if (cd->ws_offset + ws->size > server_mr_size) {
+		log_err(
+			"the workspace ends beyond the memory region (%zu > %zu)\n",
+			cd->ws_offset + ws->size, server_mr_size);
+		goto err_conn_delete;
+	}
+
+	cd->ws_size = ws->size;
 	td->io_ops_data = cd;
 
 	return 0;
@@ -488,7 +523,7 @@ static int client_commit(struct thread_data *td)
 		if (io_u->ddir == DDIR_WRITE) {
 			/* post an RDMA write operation */
 			size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-			size_t dst_offset = io_u->offset;
+			size_t dst_offset = cd->ws_offset + io_u->offset;
 			if (i == 0)
 				flush_req.offset = dst_offset;
 			
@@ -922,7 +957,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_conn_private_data pdata;
 	struct rpma_mr_local *mmap_mr;
-	struct example_common_data data;
+	struct workspace data;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
 	struct rpma_ep *ep;
@@ -982,9 +1017,9 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* calculate data for the server read */
 	data.mr_desc_size = mr_desc_size;
-	data.data_offset = 0;
+	data.size = td_max_bs(td);
 	pdata.ptr = &data;
-	pdata.len = sizeof(struct example_common_data);
+	pdata.len = sizeof(struct workspace);
 
 	/* start a listening endpoint at addr:port */
 	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &ep);
