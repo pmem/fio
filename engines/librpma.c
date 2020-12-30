@@ -492,7 +492,7 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int
 {
 	struct client_data *cd = td->io_ops_data;
 	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-	size_t dst_offset = io_u->offset;
+	size_t dst_offset = cd->ws_offset + io_u->offset;
 
 	int ret = rpma_write(cd->conn,
 			cd->server_mr, dst_offset,
