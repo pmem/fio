@@ -538,7 +538,7 @@ static int client_commit(struct thread_data *td)
 
 			/* send the flush message */
 			if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
-					RPMA_F_COMPLETION_ON_ERROR, NULL))) {
+					RPMA_F_COMPLETION_ALWAYS, NULL))) {
 				rpma_td_verror(td, ret, "rpma_send");
 				return -1;
 			}
@@ -602,6 +602,9 @@ static int client_getevent_process(struct thread_data *td)
 		rpma_td_verror(td, ret, "rpma_conn_completion_get");
 		return -1;
 	}
+
+	if (cmpl.op == RPMA_OP_SEND)
+		return 0;
 
 	/* if io_us has completed with an error */
 	if (cmpl.op_status != IBV_WC_SUCCESS)
@@ -1103,11 +1106,13 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	int msg_index;
 	int ret;
 
-	/* wait for the completion to be ready */
-	if ((ret = rpma_conn_completion_wait(sd->conn)))
-		goto err_terminate;
-	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
-		goto err_terminate;
+	do {
+		/* wait for the completion to be ready */
+		if ((ret = rpma_conn_completion_wait(sd->conn)))
+			goto err_terminate;
+		if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
+			goto err_terminate;
+	} while (cmpl.op != RPMA_OP_RECV);
 
 	/* validate the completion */
 	if (cmpl.op_status != IBV_WC_SUCCESS)
@@ -1165,7 +1170,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 
 	/* send the flush response */
 	if ((ret = rpma_send(sd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
-			RPMA_F_COMPLETION_ON_ERROR, NULL)))
+			RPMA_F_COMPLETION_ALWAYS, NULL)))
 		goto err_terminate;
 
 	return FIO_Q_COMPLETED;
