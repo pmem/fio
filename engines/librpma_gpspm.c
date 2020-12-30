@@ -947,6 +947,13 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		td_verror(td, errno, "pmem_map_file");
 		return 1;
 	}
+	/*
+	 * XXX the server-side does not execute any FIO-provided IO against
+	 * the file so it also does not needs its size. Maybe there is
+	 * a better way to have io_u buffers without linking them in any way
+	 * with this file.
+	 */
+	f->real_file_size = mmap_size;
 
 	if (!mmap_is_pmem)
 		log_info("fio: %s is not located in persistent memory\n",
