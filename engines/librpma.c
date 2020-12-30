@@ -577,6 +577,7 @@ static int client_commit(struct thread_data *td)
 	bool fill_time;
 	int ret;
 	int i;
+	unsigned long long flush_offset = 0;
 	unsigned long long flush_len = 0;
 
 	if (!cd->io_us_queued)
@@ -604,19 +605,29 @@ static int client_commit(struct thread_data *td)
 			if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
 				return -1;
 
+			/* store offset of the first write operation in a sequence */
+			if (!flush_len) {
+				flush_offset = io_u->offset;
+			}
 			flush_len += io_u->xfer_buflen;
 
 			if (i < cd->io_u_queued_nr - 1)
 				continue;
 
 			ret = rpma_flush(cd->conn, cd->server_mr,
-				io_u->offset, flush_len,
+					flush_offset, flush_len,
 				cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
 				(void *)(uintptr_t)io_u->index);
 			if (ret) {
 				rpma_td_verror(td, ret, "rpma_flush");
 				return -1;
 			}
+			/*
+			 * XXX
+			 * later, for mixed mode and random access clear flush_len
+			 * flush_len = 0;
+			 * to force new offset and new calculation of length
+			 */
 		} else {
 			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
 			return -1;
