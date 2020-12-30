@@ -1,7 +1,6 @@
 # Example of the librpma_gpspm client job
 
 # The engine requires some options to work correctly:
-# - thread XXX some initiation steps are synchronized between threads
 # - create_serialize=0 forces specific initiation sequence
 
 [global]
@@ -10,7 +9,6 @@ hostname=[IP address the server is listening on]
 port=[port the server is listening on]
 thread
 
-# XXX
 # The client will get a remote memory region description after establishing
 # a connection.
 
@@ -23,4 +21,3 @@ iodepth=[total # of ious]
 iodepth_batch_submit=[# of ious to submit at once]
 readwrite=[read/write/randread/randwrite/readwrite/rw]
 blocksize=[block size]
-size=[XXX a space for a single thread?]
