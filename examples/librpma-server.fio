@@ -1,7 +1,6 @@
 # Example of the librpma server job
 
 # The engine requires some options to work correctly:
-# - thread XXX some initiation steps are synchronized between threads
 # - create_serialize=0 forces specific initiation sequence
 
 [global]
