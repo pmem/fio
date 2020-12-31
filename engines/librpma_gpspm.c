@@ -575,7 +575,7 @@ static int client_commit(struct thread_data *td)
 
 			/* send the flush message */
 			if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
-					RPMA_F_COMPLETION_ON_ERROR, NULL))) {
+					RPMA_F_COMPLETION_ALWAYS, NULL))) {
 				rpma_td_verror(td, ret, "rpma_send");
 				return -1;
 			}
@@ -618,7 +618,6 @@ static int client_getevent_process(struct thread_data *td)
 {
 	struct client_data *cd = td->io_ops_data;
 	struct rpma_completion cmpl;
-	unsigned int io_us_error = 0;
 	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
 	/* # of completed io_us */
@@ -641,8 +640,13 @@ static int client_getevent_process(struct thread_data *td)
 	}
 
 	/* if io_us has completed with an error */
-	if (cmpl.op_status != IBV_WC_SUCCESS)
-		io_us_error = cmpl.op_status;
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
+		td->error = cmpl.op_status;
+		return -1;
+	}
+
+	if (cmpl.op != RPMA_OP_RECV)
+		return 0;
 
 	/* unpack a response from the received buffer */
 	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
@@ -675,7 +679,6 @@ static int client_getevent_process(struct thread_data *td)
 	for (i = 0; i < cmpl_num; ++i) {
 		/* get and prepare io_u */
 		io_u = cd->io_us_flight[i];
-		io_u->error = io_us_error;
 
 		/* append to the queue */
 		cd->io_us_completed[cd->io_u_completed_nr] = io_u;
@@ -1140,11 +1143,13 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	int msg_index;
 	int ret;
 
-	/* wait for the completion to be ready */
-	if ((ret = rpma_conn_completion_wait(sd->conn)))
-		goto err_terminate;
-	if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
-		goto err_terminate;
+	do {
+		/* wait for the completion to be ready */
+		if ((ret = rpma_conn_completion_wait(sd->conn)))
+			goto err_terminate;
+		if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
+			goto err_terminate;
+	} while (cmpl.op != RPMA_OP_RECV);
 
 	/* validate the completion */
 	if (cmpl.op_status != IBV_WC_SUCCESS)
@@ -1202,7 +1207,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 
 	/* send the flush response */
 	if ((ret = rpma_send(sd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
-			RPMA_F_COMPLETION_ON_ERROR, NULL)))
+			RPMA_F_COMPLETION_ALWAYS, NULL)))
 		goto err_terminate;
 
 	return FIO_Q_COMPLETED;
