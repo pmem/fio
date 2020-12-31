@@ -191,8 +191,11 @@ static int client_init(struct thread_data *td)
 		goto err_free_io_us_completed;
 	}
 
-	/* the send queue has to be big enough to accommodate all io_u's */
-	ret = rpma_conn_cfg_set_sq_size(cfg, td->o.iodepth);
+	/*
+	 * the send queue has to be big enough to accommodate all io_u's:
+	 * (WRITE + SEND) * iodepth
+	 */
+	ret = rpma_conn_cfg_set_sq_size(cfg, 2 * td->o.iodepth);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
