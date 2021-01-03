@@ -631,8 +631,10 @@ static int client_getevent_process(struct thread_data *td)
 	/* get a completion */
 	if ((ret = rpma_conn_completion_get(cd->conn, &cmpl))) {
 		/* lack of completion is not an error */
-		if (ret == RPMA_E_NO_COMPLETION)
+		if (ret == RPMA_E_NO_COMPLETION) {
+			/* lack of completion is not an error */
 			return 0;
+		}
 
 		/* an error occurred */
 		rpma_td_verror(td, ret, "rpma_conn_completion_get");
