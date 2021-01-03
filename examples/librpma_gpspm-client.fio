@@ -6,7 +6,7 @@
 [global]
 ioengine=librpma_gpspm_client
 hostname=[IP address the server is listening on]
-port=[port the server is listening on]
+port=[base port; ports <port; port + numjobs - 1> will be used]
 thread
 
 # The client will get a remote memory region description after establishing
