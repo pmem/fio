@@ -483,6 +483,71 @@ static int client_close_file(struct thread_data *td, struct fio_file *f)
 	return 0;
 }
 
+static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
+{
+	struct client_data *cd = td->io_ops_data;
+	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+	size_t dst_offset = cd->ws_offset + io_u->offset;
+
+	int ret = rpma_write(cd->conn,
+			cd->server_mr, dst_offset,
+			cd->orig_mr, src_offset,
+			io_u->xfer_buflen,
+			RPMA_F_COMPLETION_ON_ERROR,
+			NULL);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_write");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int client_io_flush(struct thread_data *td,
+		struct io_u *first_io_u, struct io_u *last_io_u,
+		unsigned long long int len, int i)
+{
+	struct client_data *cd = td->io_ops_data;
+	size_t io_u_buf_off = IO_U_BUF_OFF_CLIENT(td, i);
+	size_t send_offset = io_u_buf_off + SEND_OFFSET;
+	size_t recv_offset = io_u_buf_off + RECV_OFFSET;
+	void *send_ptr = cd->io_us_msgs + send_offset;
+	void *recv_ptr = cd->io_us_msgs + recv_offset;
+	GPSPMFlushRequest flush_req = GPSPM_FLUSH_REQUEST__INIT;
+	size_t flush_req_size = 0;
+
+	/* prepare a response buffer */
+	int ret = rpma_recv(cd->conn, cd->msg_mr, recv_offset, MAX_MSG_SIZE,
+			recv_ptr);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_recv");
+		return -1;
+	}
+
+	/* prepare a flush message and pack it to a send buffer */
+	flush_req.offset = cd->ws_offset + first_io_u->offset;
+	flush_req.length = len;
+	flush_req.op_context = last_io_u->index;
+	flush_req_size = gpspm_flush_request__get_packed_size(&flush_req);
+	if (flush_req_size > MAX_MSG_SIZE) {
+		log_err(
+			"Packed flush request size is bigger than available send buffer space (%"
+			PRIu64 " > %d\n", flush_req_size,
+			MAX_MSG_SIZE);
+		return -1;
+	}
+	(void) gpspm_flush_request__pack(&flush_req, send_ptr);
+
+	/* send the flush message */
+	if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
+			RPMA_F_COMPLETION_ALWAYS, NULL))) {
+		rpma_td_verror(td, ret, "rpma_send");
+		return -1;
+	}
+
+	return 0;
+}
+
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
@@ -505,15 +570,10 @@ static int client_commit(struct thread_data *td)
 	struct client_data *cd = td->io_ops_data;
 	struct timespec now;
 	bool fill_time;
-	size_t io_u_buf_off;
-	size_t send_offset;
-	size_t recv_offset;
-	void *send_ptr;
-	void *recv_ptr;
-	GPSPMFlushRequest flush_req = GPSPM_FLUSH_REQUEST__INIT;
-	size_t flush_req_size = 0;
 	int ret;
 	int i;
+	struct io_u *flush_first_io_u = NULL;
+	unsigned long long int flush_len = 0;
 
 	if (!cd->io_us_queued)
 		return -1;
@@ -522,67 +582,54 @@ static int client_commit(struct thread_data *td)
 	for (i = 0; i < cd->io_u_queued_nr; i++) {
 		struct io_u *io_u = cd->io_us_queued[i];
 
-		if (io_u->ddir == DDIR_WRITE) {
-			/* post an RDMA write operation */
-			size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-			size_t dst_offset = cd->ws_offset + io_u->offset;
-			if (i == 0)
-				flush_req.offset = dst_offset;
-			
-			flush_req.length += io_u->xfer_buflen;
-
-			ret = rpma_write(cd->conn,
-					cd->server_mr, dst_offset,
-					cd->orig_mr, src_offset,
-					io_u->xfer_buflen,
-					RPMA_F_COMPLETION_ON_ERROR,
-					NULL);
-			if (ret) {
-				rpma_td_verror(td, ret, "rpma_write");
-				return -1;
-			}
-
-			if (i != cd->io_u_queued_nr - 1)
-				continue;
-
-			io_u_buf_off = IO_U_BUF_OFF_CLIENT(td, i);
-			send_offset = io_u_buf_off + SEND_OFFSET;
-			recv_offset = io_u_buf_off + RECV_OFFSET;
-			send_ptr = cd->io_us_msgs + send_offset;
-			recv_ptr = cd->io_us_msgs + recv_offset;
-
-			/* prepare a response buffer */
-			ret = rpma_recv(cd->conn,
-					cd->msg_mr, recv_offset,
-					MAX_MSG_SIZE,
-					recv_ptr);
-			if (ret) {
-				rpma_td_verror(td, ret, "rpma_recv");
-				return -1;
-			}
-
-			/* prepare a flush message and pack it to a send buffer */
-			flush_req.op_context = io_u->index;
-			flush_req_size = gpspm_flush_request__get_packed_size(&flush_req);
-			if (flush_req_size > MAX_MSG_SIZE) {
-				log_err(
-					"Packed flush request size is bigger than available send buffer space (%"
-					PRIu64 " > %d\n", flush_req_size,
-					MAX_MSG_SIZE);
-				return -1;
-			}
-			(void) gpspm_flush_request__pack(&flush_req, send_ptr);
-
-			/* send the flush message */
-			if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
-					RPMA_F_COMPLETION_ALWAYS, NULL))) {
-				rpma_td_verror(td, ret, "rpma_send");
-				return -1;
-			}
-		} else {
+		if (io_u->ddir != DDIR_WRITE) {
 			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
 			return -1;
 		}
+
+		/* post an RDMA write operation */
+		ret = client_io_write(td, io_u);
+		if (ret)
+			return -1;
+
+		/* cache the first io_u in the sequence */
+		if (flush_first_io_u == NULL)
+			flush_first_io_u = io_u;
+
+		/*
+		 * the flush length is the sum of all io_u's creating
+		 * the sequence
+		 */
+		flush_len += io_u->xfer_buflen;
+
+		/*
+		 * if io_u's are random the rpma_flush is required after
+		 * each one of them
+		 */
+		if (!td_random(td)) {
+			/*
+			 * When the io_u's are sequential and the current
+			 * io_u is not the last one and the next one is also
+			 * a write operation the flush can be postponed by
+			 * one io_u and cover all of them which build up
+			 * a continuous sequence.
+			 */
+			if (i + 1 < cd->io_u_queued_nr &&
+					cd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
+				continue;
+		}
+
+		/* flush all writes which build a continuous sequence */
+		ret = client_io_flush(td, flush_first_io_u, io_u, flush_len, i);
+		if (ret)
+			return -1;
+
+		/*
+		 * reset the flush parameters in preparation for
+		 * the next one
+		 */
+		flush_first_io_u = NULL;
+		flush_len = 0;
 	}
 
 	if ((fill_time = fio_fill_issue_time(td)))
