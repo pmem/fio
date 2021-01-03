@@ -125,6 +125,7 @@ struct client_data {
 	/* resources for messaging buffer */
 	uint32_t msg_num;
 	uint32_t msg_curr;
+	uint32_t msg_send_completed;
 	struct rpma_mr_local *msg_mr;
 
 	/* remote workspace description */
@@ -404,6 +405,7 @@ static int client_post_init(struct thread_data *td)
 
 	/* message buffers initialization and registration */
 	cd->msg_curr = 0;
+	cd->msg_send_completed = 0;
 	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
 	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
 			page_size, io_us_msgs_size))) {
@@ -443,13 +445,42 @@ static int client_post_init(struct thread_data *td)
 static void client_cleanup(struct thread_data *td)
 {
 	struct client_data *cd = td->io_ops_data;
+	struct rpma_completion cmpl;
 	size_t flush_req_size;
-	void *send_buff_ptr;
+	size_t io_u_buf_off;
+	size_t send_offset;
+	void *send_ptr;
 	enum rpma_conn_event ev;
 	int ret;
 
 	if (cd == NULL)
 		return;
+
+	/*
+	 * Make sure all SEND completions are collected ergo there are free
+	 * slots in the SQ for the last SEND message.
+	 *
+	 * Note: If any operation will fail we still can send the termination
+	 * notice.
+	 */
+	while (cd->msg_curr > cd->msg_send_completed) {
+		/* get a completion */
+		ret = rpma_conn_completion_get(cd->conn, &cmpl);
+		if (ret == RPMA_E_NO_COMPLETION) {
+			/* lack of completion is not an error */
+			continue;
+		} else if (ret != 0) {
+			/* an error occurred */
+			rpma_td_verror(td, ret, "rpma_conn_completion_get");
+			break;
+		}
+
+		if (cmpl.op_status != IBV_WC_SUCCESS)
+			break;
+
+		if (cmpl.op == RPMA_OP_SEND)
+			++cd->msg_send_completed;
+	}
 
 	/* prepare the last flush message and pack it to the send buffer */
 	flush_req_size = gpspm_flush_request__get_packed_size(&Flush_req_last);
@@ -458,11 +489,13 @@ static void client_cleanup(struct thread_data *td)
 			"Packed flush request size is bigger than available send buffer space (%zu > %d\n",
 			flush_req_size, MAX_MSG_SIZE);
 	} else {
-		send_buff_ptr = cd->io_us_msgs + SEND_OFFSET;
-		(void) gpspm_flush_request__pack(&Flush_req_last, send_buff_ptr);
+		io_u_buf_off = IO_U_NEXT_BUF_OFF_CLIENT(cd);
+		send_offset = io_u_buf_off + SEND_OFFSET;
+		send_ptr = cd->io_us_msgs + send_offset;
+		(void) gpspm_flush_request__pack(&Flush_req_last, send_ptr);
 
 		/* send the flush message */
-		if ((ret = rpma_send(cd->conn, cd->msg_mr, SEND_OFFSET, flush_req_size,
+		if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
 					RPMA_F_COMPLETION_ON_ERROR, NULL)))
 			rpma_td_verror(td, ret, "rpma_send");
 	}
@@ -639,7 +672,9 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 		if (cmpl.op_status != IBV_WC_SUCCESS)
 			goto err;
 
-		if (cmpl.op == RPMA_OP_RECV)
+		if (cmpl.op == RPMA_OP_SEND)
+			++cd->msg_send_completed;
+		else if (cmpl.op == RPMA_OP_RECV)
 			break;
 	} while (1);
 
@@ -813,8 +848,12 @@ static int client_getevent_process(struct thread_data *td)
 		return -1;
 	}
 
-	if (cmpl.op != RPMA_OP_RECV)
+	if (cmpl.op != RPMA_OP_RECV) {
+		if (cmpl.op == RPMA_OP_SEND)
+			++cd->msg_send_completed;
+
 		return 0;
+	}
 
 	/* unpack a response from the received buffer */
 	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
