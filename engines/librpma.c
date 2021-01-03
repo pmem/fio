@@ -535,7 +535,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	unsigned int io_u_index;
 	int ret;
 
-	/* execute io_us */
+	/* execute io_u */
 	if (io_u->ddir == DDIR_READ) {
 		/* post an RDMA read operation */
 		if ((ret = client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS)))
