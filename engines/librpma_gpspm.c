@@ -63,8 +63,8 @@ struct workspace {
 
 /* client side implementation */
 
-#define IO_U_BUF_OFF_CLIENT(td, i) \
-    (IO_U_BUF_LEN * (((i) + (td)->o.iodepth_batch - 1) / (td)->o.iodepth_batch))
+#define IO_U_NEXT_BUF_OFF_CLIENT(cd) \
+    (IO_U_BUF_LEN * ((cd->msg_curr++) % cd->msg_num))
 
 struct client_options {
 	/*
@@ -119,6 +119,8 @@ struct client_data {
 	char *io_us_msgs;
 
 	/* resources for messaging buffer */
+	uint32_t msg_num;
+	uint32_t msg_curr;
 	struct rpma_mr_local *msg_mr;
 
 	/* remote workspace description */
@@ -142,7 +144,7 @@ static int client_init(struct thread_data *td)
 	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
-	uint32_t cq_size;
+	uint32_t write_num;
 	struct rpma_conn_private_data pdata;
 	struct workspace *ws;
 	size_t server_mr_size;
@@ -195,35 +197,51 @@ static int client_init(struct thread_data *td)
 	}
 
 	/*
-	 * the send queue has to be big enough to accommodate all io_u's:
-	 * (WRITE + SEND) * iodepth
+	 * Calculate the required number of WRITEs and FLUSHes.
+	 *
+	 * Note: Each flush is a request (SEND) and response (RECV) pair.
 	 */
-	ret = rpma_conn_cfg_set_sq_size(cfg, 2 * td->o.iodepth);
+	if (td_random(td)) {
+		write_num = td->o.iodepth; /* WRITE * N */
+		cd->msg_num = td->o.iodepth; /* FLUSH * N */
+	} else {
+		if (td->o.sync_io) {
+			write_num = 1; /* WRITE */
+			cd->msg_num = 1; /* FLUSH */
+		} else {
+			write_num = td->o.iodepth; /* WRITE * N */
+			/*
+			 * FLUSH * B where:
+			 * - B == ceil(iodepth / iodepth_batch) ~=
+			 *   iodepth / iodepth_batch + 1
+			 *   which is the number of batches for N writes
+			 */
+			cd->msg_num = td->o.iodepth / td->o.iodepth_batch + 1;
+		}
+	}
+
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all io_us (WRITEs) and all flush requests (SENDs)
+	 * - the receive queue (RQ) has to be big enough to accommodate all flush
+	 *   responses (RECVs)
+	 * - the completion queue (CQ) has to be big enough to accommodate all
+	 *   success and error completions (sq_size + rq_size)
+	 */
+	ret = rpma_conn_cfg_set_sq_size(cfg, write_num + cd->msg_num);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-
-	/* cq_size = ceil(td->o.iodepth / td->o.iodepth_batch) */
-	cq_size = (td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch;
-
-	/*
-	 * The completion queue has to be big enough
-	 * to accommodate one completion for each batch.
-	 */
-	ret = rpma_conn_cfg_set_cq_size(cfg, cq_size);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
-		goto err_cfg_delete;
-	}
-
-	/*
-	 * The recv queue has to be big enough
-	 * to accommodate one completion for each batch.
-	 */
-	ret = rpma_conn_cfg_set_rq_size(cfg, cq_size);
+	ret = rpma_conn_cfg_set_rq_size(cfg, cd->msg_num);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
+	ret = rpma_conn_cfg_set_cq_size(cfg, write_num + cd->msg_num * 2);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
 	
@@ -346,16 +364,14 @@ static int client_post_init(struct thread_data *td)
 	unsigned int io_us_msgs_size;
 	int ret;
 
-	/* message buffers registration */
-	/* ceil(td->o.iodepth / td->o.iodepth_batch) * IO_U_BUF_LEN */
-	io_us_msgs_size = ((td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch) * IO_U_BUF_LEN;
-
+	/* message buffers initialization and registration */
+	cd->msg_curr = 0;
+	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
 	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
 			page_size, io_us_msgs_size))) {
 		td_verror(td, ret, "posix_memalign");
 		return ret;
 	}
-
 	if ((ret = rpma_mr_reg(cd->peer, cd->io_us_msgs, io_us_msgs_size,
 			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
 			&cd->msg_mr))) {
@@ -505,10 +521,10 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
 
 static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
-		unsigned long long int len, int i)
+		unsigned long long int len)
 {
 	struct client_data *cd = td->io_ops_data;
-	size_t io_u_buf_off = IO_U_BUF_OFF_CLIENT(td, i);
+	size_t io_u_buf_off = IO_U_NEXT_BUF_OFF_CLIENT(cd);
 	size_t send_offset = io_u_buf_off + SEND_OFFSET;
 	size_t recv_offset = io_u_buf_off + RECV_OFFSET;
 	void *send_ptr = cd->io_us_msgs + send_offset;
@@ -566,7 +582,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	/* post an RDMA write operation */
 	if ((ret = client_io_write(td, io_u)))
 		goto err;
-	if ((ret = client_io_flush(td, io_u, io_u, io_u->xfer_buflen, 0)))
+	if ((ret = client_io_flush(td, io_u, io_u, io_u->xfer_buflen)))
 		goto err;
 
 	do {
@@ -685,7 +701,7 @@ static int client_commit(struct thread_data *td)
 		}
 
 		/* flush all writes which build a continuous sequence */
-		ret = client_io_flush(td, flush_first_io_u, io_u, flush_len, i);
+		ret = client_io_flush(td, flush_first_io_u, io_u, flush_len);
 		if (ret)
 			return -1;
 
