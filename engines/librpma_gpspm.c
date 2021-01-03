@@ -137,12 +137,39 @@ struct client_data {
 	int io_u_completed_nr;
 };
 
+#define PORT_STR_LEN_MAX 10
+
+static int common_td_port(const char *port_base_str,
+		struct thread_data *td, char *port_out)
+{
+	unsigned long int port_ul = strtoul(port_base_str, NULL, 10);
+	unsigned int port_new;
+
+	port_out[0] = '\0';
+
+	if (port_ul == ULONG_MAX) {
+		td_verror(td, errno, "strtoul");
+		return -1;
+	}
+	port_ul += td->thread_number - 1;
+	if (port_ul >= UINT_MAX) {
+		log_err("[%u] port number (%ul) bigger than UINT_MAX\n", port_ul);
+		return -1;
+	}
+
+	port_new = port_ul;
+	snprintf(port_out, PORT_STR_LEN_MAX - 1, "%u", port_new);
+
+	return 0;
+}
+
 static int client_init(struct thread_data *td)
 {
 	struct client_options *o = td->eo;
 	struct client_data *cd;
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_cfg *cfg = NULL;
+	char port_td[PORT_STR_LEN_MAX];
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	uint32_t cq_size;
@@ -243,7 +270,9 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* create a connection request */
-	ret = rpma_conn_req_new(cd->peer, o->hostname, o->port, cfg, &req);
+	if ((ret = common_td_port(o->port, td, port_td)))
+		goto err_peer_delete;
+	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
@@ -911,7 +940,6 @@ struct server_options {
 	void *pad;
 	char *bindname;
 	char *port;
-	unsigned int num_conns;
 };
 
 static struct fio_option fio_server_options[] = {
@@ -932,17 +960,6 @@ static struct fio_option fio_server_options[] = {
 		.off1	= offsetof(struct server_options, port),
 		.help	= "port to listen on for incoming connections",
 		.def    = "7204",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA_GPSPM,
-	},
-	{
-		.name	= "num_conns",
-		.lname	= "Number of connections",
-		.type	= FIO_OPT_INT,
-		.off1	= offsetof(struct server_options, num_conns),
-		.help	= "Number of connections to server",
-		.minval = 1,
-		.def	= "1",
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_LIBRPMA_GPSPM,
 	},
@@ -1082,6 +1099,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct workspace ws;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
+	char port_td[PORT_STR_LEN_MAX];
 	struct rpma_ep *ep;
 	size_t mr_desc_size;
 	size_t mmap_size = 0;
@@ -1119,6 +1137,11 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	log_info("fio: size of memory mapped from the file %s: %zu\n",
 		f->file_name, mmap_size);
 
+	/*
+	 * XXX since a pair of client's and server's thread will work only on
+	 * a dedicated workspace there is no point in registering the whole
+	 * provided memory for each of the working threads.
+	 */
 	ret = rpma_mr_reg(sd->peer, mmap_ptr, mmap_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
@@ -1144,7 +1167,9 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	pdata.len = sizeof(struct workspace);
 
 	/* start a listening endpoint at addr:port */
-	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &ep);
+	if ((ret = common_td_port(o->port, td, port_td)))
+		goto err_mr_dereg;
+	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_ep_listen");
 		goto err_mr_dereg;

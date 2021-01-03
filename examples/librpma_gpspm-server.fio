@@ -6,19 +6,21 @@
 [global]
 ioengine=librpma_gpspm_server
 bindname=[IP address to listen on]
-port=[port to listen on]
+port=[base port; ports <port; port + numjobs - 1> will be used]
 thread
 
-# XXX
-# The server side spawns a single thread, opens and registers the whole
-# provided memory. The server accepts a connection, waits for it to end up,
-# and closes itself.
+# The server side spawns one thread for each expected connection from
+# the client-side, opens and registers the whole provided memory.
+# Each of the server threads accepts a connection on the dedicated port
+# (different for each and every working thread), accepts and executes flush
+# requests, and sends back a flush response for each of the requests.
+# When the client is done it sends the termination notice to the server's thread.
 
 [server]
 create_serialize=0
-iodepth=1
+numjobs=1
+iodepth=[total # of ious (in sync with the client side)]
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
-num_conns=[total # of connections]
 size=[size of workspace for a single connection]
 filename=[device dax or an existing fsdax file]
 
