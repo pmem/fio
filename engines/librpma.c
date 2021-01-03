@@ -125,7 +125,7 @@ static int client_init(struct thread_data *td)
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_ERROR);
 
 	/* not supported readwrite = trim / randtrim / trimwrite */
-	if (td_trim(td) || td_trimwrite(td)) {
+	if (td_trim(td)) {
 		log_err("Not supported mode.\n");
 		return 1;
 	}
