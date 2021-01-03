@@ -152,6 +152,12 @@ static int client_init(struct thread_data *td)
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_ERROR);
 	
+	/* not supported readwrite = read / trim / randread / randtrim / rw / randrw / trimwrite */
+	if (td_read(td) || td_trim(td)) {
+		log_err("Not supported mode.\n");
+		return 1;
+	}
+
 	/* allocate client's data */
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
