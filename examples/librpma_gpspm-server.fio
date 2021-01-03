@@ -16,7 +16,9 @@ thread
 
 [server]
 create_serialize=0
-iodepth=1
+# XXX iodepth can be passed to the client-side for validation along with
+# the workspace description.
+iodepth=[total # of ious (in sync with the client side)]
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 num_conns=[total # of connections]
 size=[size of workspace for a single connection]
