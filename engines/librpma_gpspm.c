@@ -548,6 +548,70 @@ static inline int client_io_flush(struct thread_data *td,
 	return 0;
 }
 
+static enum fio_q_status client_queue_sync(struct thread_data *td,
+					  struct io_u *io_u)
+{
+	struct client_data *cd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	GPSPMFlushResponse *flush_resp;
+	/* io_u->index of completed io_u (flush_resp->op_context) */
+	unsigned int io_u_index;
+	int ret;
+
+	if (io_u->ddir != DDIR_WRITE) {
+		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
+		return -1;
+	}
+
+	/* post an RDMA write operation */
+	if ((ret = client_io_write(td, io_u)))
+		goto err;
+	if ((ret = client_io_flush(td, io_u, io_u, io_u->xfer_buflen, 0)))
+		goto err;
+
+	do {
+		/* get a completion */
+		ret = rpma_conn_completion_get(cd->conn, &cmpl);
+		if (ret == RPMA_E_NO_COMPLETION) {
+			/* lack of completion is not an error */
+			continue;
+		} else if (ret != 0) {
+			/* an error occurred */
+			rpma_td_verror(td, ret, "rpma_conn_completion_get");
+			goto err;
+		}
+
+		/* if io_us has completed with an error */
+		if (cmpl.op_status != IBV_WC_SUCCESS)
+			goto err;
+
+		if (cmpl.op == RPMA_OP_RECV)
+			break;
+	} while (1);
+
+	/* unpack a response from the received buffer */
+	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
+			cmpl.op_context);
+	if (flush_resp == NULL) {
+		log_err("Cannot unpack the flush response buffer\n");
+		goto err;
+	}
+
+	memcpy(&io_u_index, &flush_resp->op_context, sizeof(unsigned int));
+	if (io_u->index != io_u_index) {
+		log_err(
+			"no matching io_u for received completion found (io_u_index=%u)\n",
+			io_u_index);
+		goto err;
+	}
+
+	return FIO_Q_COMPLETED;
+
+err:
+	io_u->error = -1;
+	return FIO_Q_COMPLETED;
+}
+
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
@@ -556,7 +620,8 @@ static enum fio_q_status client_queue(struct thread_data *td,
 	if (cd->io_u_queued_nr == (int)td->o.iodepth)
 		return FIO_Q_BUSY;
 
-	/* XXX - implement synchronous variant */
+	if (td->o.sync_io)
+		return client_queue_sync(td, io_u);
 
 	/* io_u -> queued[] */
 	cd->io_us_queued[cd->io_u_queued_nr] = io_u;
