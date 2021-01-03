@@ -172,7 +172,13 @@ static int client_init(struct thread_data *td)
 		goto err_free_io_us_completed;
 	}
 
-	/* the send queue has to be big enough to accommodate all io_u's */
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all io_us (WRITEs) and all flush requests (FLUSHes)
+	 * - the completion queue (CQ) has to be big enough to accommodate all
+	 *   success and error completions (cq_size = sq_size)
+	 */
 	if (td_random(td) || td_rw(td)) {
 		/*
 		 * sq_size = max(rand_read_sq_size, rand_write_sq_size)
@@ -207,19 +213,14 @@ static int client_init(struct thread_data *td)
 			sq_size = td->o.iodepth; /* N x READ */
 		}
 	}
+	cq_size = sq_size;
+
+	/* apply queue sizes */
 	ret = rpma_conn_cfg_set_sq_size(cfg, sq_size);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-
-	/* cq_size = ceil(td->o.iodepth / td->o.iodepth_batch) */
-	cq_size = (td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch;
-
-	/*
-	 * The completion queue has to be big enough
-	 * to accommodate one completion for each batch.
-	 */
 	ret = rpma_conn_cfg_set_cq_size(cfg, cq_size);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
