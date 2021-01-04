@@ -702,12 +702,10 @@ static int client_getevent_process(struct thread_data *td)
 static int client_getevents(struct thread_data *td, unsigned int min,
 				unsigned int max, const struct timespec *t)
 {
-	struct client_data *cd = td->io_ops_data;
 	/* total # of completed io_us */
 	int cmpl_num_total = 0;
 	/* # of completed io_us from a single event */
 	int cmpl_num;
-	int ret;
 
 	do {
 		cmpl_num = client_getevent_process(td);
@@ -718,14 +716,12 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 			if (cmpl_num_total >= min)
 				break;
 
-			/* too few completions - wait */
-			ret = rpma_conn_completion_wait(cd->conn);
-			if (ret == 0 || ret == RPMA_E_NO_COMPLETION)
-				continue;
-
-			/* an error occurred */
-			rpma_td_verror(td, ret, "rpma_conn_completion_wait");
-			return -1;
+			/* To reduce CPU consumption one can use
+			 * the rpma_conn_completion_wait() function.
+			 * Note this greatly increase the latency
+			 * and make the results less stable.
+			 * The bandwidth stays more or less the same.
+			 */
 		} else {
 			/* an error occurred */
 			return -1;
