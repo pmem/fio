@@ -198,12 +198,12 @@ static int client_init(struct thread_data *td)
 		} else {
 			/*
 			 * N * WRITE + B * FLUSH where:
-			 * - B == ceil(iodepth / iodepth_batch) ~=
-			 *   iodepth / iodepth_batch + 1
+			 * - B == ceil(iodepth / iodepth_batch) =
+			 *   (td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch
 			 *   which is the number of batches for N writes
 			 */
 			sq_size = td->o.iodepth +
-				td->o.iodepth / td->o.iodepth_batch + 1;
+				(td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch;
 		}
 	} else {
 		/* TD_DDIR_READ only */
