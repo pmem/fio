@@ -20,10 +20,13 @@
 #include <libpmem.h>
 #include <librpma.h>
 
+/* client's and server's common */
+
 #define rpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
-/* client's and server's common */
+/* ceil(a / b) = (a + b - 1) / b */
+#define CEIL(a, b) (((a) + (b) - 1) / (b))
 
 /*
  * Limited by the maximum length of the private data
@@ -198,12 +201,11 @@ static int client_init(struct thread_data *td)
 		} else {
 			/*
 			 * N * WRITE + B * FLUSH where:
-			 * - B == ceil(iodepth / iodepth_batch) ~=
-			 *   iodepth / iodepth_batch + 1
+			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
 			sq_size = td->o.iodepth +
-				td->o.iodepth / td->o.iodepth_batch + 1;
+				CEIL(td->o.iodepth, td->o.iodepth_batch);
 		}
 	} else {
 		/* TD_DDIR_READ only */
