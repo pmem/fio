@@ -560,6 +560,10 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			rpma_td_verror(td, ret, "rpma_conn_completion_get");
 			goto err;
 		}
+
+		/* if io_u has completed with an error */
+		if (cmpl.op_status != IBV_WC_SUCCESS)
+			goto err;
 	} while (ret != 0);
 
 	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
@@ -569,10 +573,6 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			io_u_index);
 		goto err;
 	}
-
-	/* if io_u has completed with an error */
-	if (cmpl.op_status != IBV_WC_SUCCESS)
-		io_u->error = cmpl.op_status;
 
 	return FIO_Q_COMPLETED;
 
