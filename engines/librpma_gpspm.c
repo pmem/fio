@@ -966,7 +966,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_conn_private_data pdata;
 	struct rpma_mr_local *mmap_mr;
-	struct workspace data;
+	struct workspace ws;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
 	struct rpma_ep *ep;
@@ -1021,13 +1021,13 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_mr_dereg;
 
 	/* get the memory region's descriptor */
-	if ((ret = rpma_mr_get_descriptor(mmap_mr, &data.descriptors[0])))
+	if ((ret = rpma_mr_get_descriptor(mmap_mr, &ws.descriptors[0])))
 		goto err_mr_dereg;
 
 	/* calculate data for the server read */
-	data.mr_desc_size = mr_desc_size;
-	data.size = td_max_bs(td);
-	pdata.ptr = &data;
+	ws.mr_desc_size = mr_desc_size;
+	ws.size = td_max_bs(td);
+	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
 	/* start a listening endpoint at addr:port */
