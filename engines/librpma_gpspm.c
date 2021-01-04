@@ -1261,10 +1261,9 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 	return rv ? -1 : 0;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					  struct io_u *io_u)
+static int server_queue_process(struct thread_data *td)
 {
-	struct server_data *sd =  td->io_ops_data;
+	struct server_data *sd = td->io_ops_data;
 	struct rpma_completion cmpl;
 	GPSPMFlushRequest *flush_req;
 	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
@@ -1278,23 +1277,24 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	int msg_index;
 	int ret;
 
-	do {
-		/* wait for the completion to be ready */
-		if ((ret = rpma_conn_completion_wait(sd->conn)))
-			goto err_terminate;
-		if ((ret = rpma_conn_completion_get(sd->conn, &cmpl)))
-			goto err_terminate;
-	} while (cmpl.op != RPMA_OP_RECV);
+	ret = rpma_conn_completion_get(sd->conn, &cmpl);
+	if (ret == RPMA_E_NO_COMPLETION) {
+		/* lack of completion is not an error */
+		return 0;
+	} else if (ret != 0) {
+		rpma_td_verror(td, ret, "rpma_conn_completion_get");
+		goto err_terminate;
+	}
 
 	/* validate the completion */
 	if (cmpl.op_status != IBV_WC_SUCCESS)
 		goto err_terminate;
-	if (cmpl.op != RPMA_OP_RECV) {
-		log_err("unexpected completion (0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
-			(uintptr_t)cmpl.op, (uintptr_t)RPMA_OP_RECV);
-		goto err_terminate;
-	}
 
+	/* nothing more to do */
+	if (cmpl.op != RPMA_OP_RECV)
+		return 0;
+
+	/* calculate SEND/RECV pair parameters */
 	msg_index = (int)(uintptr_t)cmpl.op_context;
 	io_u_buff_offset = IO_U_BUFF_OFF_SERVER(msg_index);
 	send_buff_offset = io_u_buff_offset + SEND_OFFSET;
@@ -1317,7 +1317,7 @@ static enum fio_q_status server_queue(struct thread_data *td,
 		 * This is the last message - the client is done.
 		 */
 		td->done = true;
-		return FIO_Q_COMPLETED;
+		return 0;
 	}
 
 	/* initiate the next receive operation */
@@ -1345,10 +1345,24 @@ static enum fio_q_status server_queue(struct thread_data *td,
 			RPMA_F_COMPLETION_ALWAYS, NULL)))
 		goto err_terminate;
 
-	return FIO_Q_COMPLETED;
+	return 0;
 
 err_terminate:
 	td->terminate = true;
+
+	return -1;
+}
+
+static enum fio_q_status server_queue(struct thread_data *td,
+					  struct io_u *io_u)
+{
+	int ret;
+
+	do {
+		if ((ret = server_queue_process(td)))
+			return FIO_Q_BUSY;
+
+	} while (!td->done);
 
 	return FIO_Q_COMPLETED;
 }
