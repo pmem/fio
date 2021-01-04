@@ -29,6 +29,9 @@
 #define rpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
+/* ceil(a / b) = (a + b - 1) / b */
+#define CEIL(a, b) (((a) + (b) - 1) / (b))
+
 #define MAX_MSG_SIZE (512)
 #define IO_U_BUF_LEN (2 * MAX_MSG_SIZE)
 #define SEND_OFFSET (0)
@@ -210,8 +213,7 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 
-	/* cq_size = ceil(td->o.iodepth / td->o.iodepth_batch) */
-	cq_size = (td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch;
+	cq_size = CEIL(td->o.iodepth, td->o.iodepth_batch);
 
 	/*
 	 * The completion queue has to be big enough
@@ -353,8 +355,7 @@ static int client_post_init(struct thread_data *td)
 	int ret;
 
 	/* message buffers registration */
-	/* ceil(td->o.iodepth / td->o.iodepth_batch) * IO_U_BUF_LEN */
-	io_us_msgs_size = ((td->o.iodepth + td->o.iodepth_batch - 1) / td->o.iodepth_batch) * IO_U_BUF_LEN;
+	io_us_msgs_size = CEIL(td->o.iodepth, td->o.iodepth_batch) * IO_U_BUF_LEN;
 
 	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
 			page_size, io_us_msgs_size))) {
