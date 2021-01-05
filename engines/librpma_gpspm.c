@@ -1154,6 +1154,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_conn_private_data pdata;
 	struct rpma_mr_local *mmap_mr;
 	struct workspace ws;
+	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
 	char port_td[PORT_STR_LEN_MAX];
@@ -1232,9 +1233,47 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_mr_dereg;
 	}
 
-	/* receive an incoming connection request */
-	if ((ret = rpma_ep_next_conn_req(ep, NULL, &conn_req)))
+	/* create a connection configuration object */
+	ret = rpma_conn_cfg_new(&cfg);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_new");
 		goto err_ep_shutdown;
+	}
+
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all possible flush requests (SENDs)
+	 * - the receive queue (RQ) has to be big enough to accommodate all flush
+	 *   responses (RECVs)
+	 * - the completion queue (CQ) has to be big enough to accommodate all
+	 *   success and error completions (sq_size + rq_size)
+	 */
+	ret = rpma_conn_cfg_set_sq_size(cfg, td->o.iodepth);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		goto err_cfg_delete;
+	}
+	ret = rpma_conn_cfg_set_rq_size(cfg, td->o.iodepth);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
+	ret = rpma_conn_cfg_set_cq_size(cfg, td->o.iodepth * 2);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		goto err_cfg_delete;
+	}
+
+	/* receive an incoming connection request */
+	if ((ret = rpma_ep_next_conn_req(ep, cfg, &conn_req)))
+		goto err_cfg_delete;
+
+	ret = rpma_conn_cfg_delete(&cfg);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		goto err_req_delete;
+	}
 
 	/* prepare buffers for a flush requests */
 	for (i = 0; i < td->o.iodepth; i++) {
@@ -1275,6 +1314,10 @@ err_conn_delete:
 
 err_req_delete:
 	(void) rpma_conn_req_delete(&conn_req);
+
+err_cfg_delete:
+	if (cfg)
+		(void) rpma_conn_cfg_delete(&cfg);
 
 err_ep_shutdown:
 	(void) rpma_ep_shutdown(&ep);
