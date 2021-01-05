@@ -53,12 +53,13 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
 
 /*
  * Limited by the maximum length of the private data
- * for rdma_connect() in case of RDMA_PS_TCP (56 bytes).
+ * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
  */
-#define DESCRIPTORS_MAX_SIZE 23
+#define DESCRIPTORS_MAX_SIZE 21
 
 struct workspace {
 	uint32_t size;		/* size of workspace for a single connection */
+	uint16_t max_msg_num;	/* # of RQ slots */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
 	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
@@ -327,8 +328,16 @@ static int client_init(struct thread_data *td)
 	if ((ret = rpma_conn_get_private_data(cd->conn, &pdata)))
 		goto err_conn_delete;
 
-	/* create the server's memory representation */
+	/* create the server's workspace representation */
 	ws = pdata.ptr;
+
+	/* validate the server's RQ capacity */
+	if (cd->msg_num > ws->max_msg_num) {
+		log_err(
+			"server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
+			ws->max_msg_num, cd->msg_num);
+		goto err_conn_delete;
+	}
 
 	/* validate the received workspace size */
 	if (ws->size < td->o.size) {
@@ -1171,6 +1180,13 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		return 1;
 	}
 
+	/* verify whether iodepth fits into uint16_t */
+	if (td->o.iodepth > UINT16_MAX) {
+		log_err("fio: iodepth too big (%u > %u)\n", td->o.iodepth, UINT16_MAX);
+		return 1;
+	}
+	ws.max_msg_num = td->o.iodepth;
+
 	/* map the file */
 	mmap_ptr = pmem_map_file(f->file_name, 0 /* len */, 0 /* flags */,
 			0 /* mode */, &mmap_size, &mmap_is_pmem);
@@ -1249,17 +1265,17 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	 * - the completion queue (CQ) has to be big enough to accommodate all
 	 *   success and error completions (sq_size + rq_size)
 	 */
-	ret = rpma_conn_cfg_set_sq_size(cfg, td->o.iodepth);
+	ret = rpma_conn_cfg_set_sq_size(cfg, ws.max_msg_num);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_rq_size(cfg, td->o.iodepth);
+	ret = rpma_conn_cfg_set_rq_size(cfg, ws.max_msg_num);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, td->o.iodepth * 2);
+	ret = rpma_conn_cfg_set_cq_size(cfg, ws.max_msg_num * 2);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
