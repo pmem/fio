@@ -1118,6 +1118,13 @@ static int server_post_init(struct thread_data *td)
 	 */
 	io_u_buflen = td_max_bs(td);
 
+	/* check whether io_u buffer is big enough */
+	if (io_u_buflen < IO_U_BUF_LEN) {
+		log_err("blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
+				io_u_buflen, IO_U_BUF_LEN);
+		return 1;
+	}
+
 	/*
 	 * td->orig_buffer_size beside the space really consumed by io_us
 	 * has paddings which can be omitted for the memory registration.
