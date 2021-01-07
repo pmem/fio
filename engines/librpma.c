@@ -1082,7 +1082,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* prepare a workspace description */
 	sd->ws.mr_desc_size = mr_desc_size;
-	sd->ws.size = td_max_bs(td);
+	sd->ws.size = td->o.size;
 
 	/* attach the workspace to private data structure */
 	sd->pdata.ptr = &sd->ws;
