@@ -1051,6 +1051,12 @@ struct server_data {
 
 	/* resources for messaging buffer from DRAM allocated by fio */
 	struct rpma_mr_local *msg_mr;
+
+	uint32_t msg_sqe_available; /* # of free SQ slots */
+
+	/* in-memory queues */
+	struct rpma_completion *msgs_queued;
+	uint32_t msg_queued_nr;
 };
 
 static int server_init(struct thread_data *td)
@@ -1071,13 +1077,20 @@ static int server_init(struct thread_data *td)
 		return 1;
 	}
 
+	/* allocate in-memory queue */
+	sd->msgs_queued = calloc(td->o.iodepth, sizeof(struct rpma_completion));
+	if (sd->msgs_queued == NULL) {
+		td_verror(td, errno, "calloc");
+		goto err_free_sd;
+	}
+
 	/* obtain an IBV context for a local IP address */
 	ret = rpma_utils_get_ibv_context(o->bindname,
 				RPMA_UTIL_IBV_CONTEXT_LOCAL,
 				&dev);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
-		goto err_free_sd;
+		goto err_free_msg_queue;
 	}
 
 	/* create a new peer object */
@@ -1090,6 +1103,9 @@ static int server_init(struct thread_data *td)
 	td->io_ops_data = sd;
 
 	return 0;
+
+err_free_msg_queue:
+	free(sd->msgs_queued);
 
 err_free_sd:
 	free(sd);
@@ -1159,6 +1175,7 @@ static void server_cleanup(struct thread_data *td)
 	if ((ret = rpma_peer_delete(&sd->peer)))
 		rpma_td_verror(td, ret, "rpma_peer_delete");
 
+	free(sd->msgs_queued);
 	free(sd);
 }
 
@@ -1299,6 +1316,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 
 	/* prepare buffers for a flush requests */
+	sd->msg_sqe_available = td->o.iodepth;
 	for (i = 0; i < td->o.iodepth; i++) {
 		size_t offset_recv_msg = IO_U_BUFF_OFF_SERVER(i) + RECV_OFFSET;
 		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
@@ -1390,10 +1408,9 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 	return rv ? -1 : 0;
 }
 
-static int server_queue_process(struct thread_data *td)
+static int server_qe_process(struct thread_data *td, struct rpma_completion *cmpl)
 {
 	struct server_data *sd = td->io_ops_data;
-	struct rpma_completion cmpl;
 	GPSPMFlushRequest *flush_req;
 	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
 	size_t flush_resp_size = 0;
@@ -1406,25 +1423,8 @@ static int server_queue_process(struct thread_data *td)
 	int msg_index;
 	int ret;
 
-	ret = rpma_conn_completion_get(sd->conn, &cmpl);
-	if (ret == RPMA_E_NO_COMPLETION) {
-		/* lack of completion is not an error */
-		return 0;
-	} else if (ret != 0) {
-		rpma_td_verror(td, ret, "rpma_conn_completion_get");
-		goto err_terminate;
-	}
-
-	/* validate the completion */
-	if (cmpl.op_status != IBV_WC_SUCCESS)
-		goto err_terminate;
-
-	/* nothing more to do */
-	if (cmpl.op != RPMA_OP_RECV)
-		return 0;
-
 	/* calculate SEND/RECV pair parameters */
-	msg_index = (int)(uintptr_t)cmpl.op_context;
+	msg_index = (int)(uintptr_t)cmpl->op_context;
 	io_u_buff_offset = IO_U_BUFF_OFF_SERVER(msg_index);
 	send_buff_offset = io_u_buff_offset + SEND_OFFSET;
 	recv_buff_offset = io_u_buff_offset + RECV_OFFSET;
@@ -1432,7 +1432,7 @@ static int server_queue_process(struct thread_data *td)
 	recv_buff_ptr = sd->orig_buffer_aligned + recv_buff_offset;
 
 	/* unpack a flush request from the received buffer */
-	flush_req = gpspm_flush_request__unpack(NULL, cmpl.byte_len, recv_buff_ptr);
+	flush_req = gpspm_flush_request__unpack(NULL, cmpl->byte_len, recv_buff_ptr);
 	if (flush_req == NULL) {
 		log_err("cannot unpack the flush request buffer\n");
 		goto err_terminate;
@@ -1473,6 +1473,66 @@ static int server_queue_process(struct thread_data *td)
 	if ((ret = rpma_send(sd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
 			RPMA_F_COMPLETION_ALWAYS, NULL)))
 		goto err_terminate;
+	--sd->msg_sqe_available;
+
+	return 0;
+
+err_terminate:
+	td->terminate = true;
+
+	return -1;
+}
+
+static inline int server_queue_process(struct thread_data *td)
+{
+	struct server_data *sd = td->io_ops_data;
+	int ret;
+	int i;
+
+	/* min(# of queue entries, # of SQ entries available) */
+	uint32_t qes_to_process = min(sd->msg_queued_nr, sd->msg_sqe_available);
+	if (qes_to_process == 0)
+		return 0;
+
+	/* process queued completions */
+	for (i = 0; i < qes_to_process; ++i) {
+		if ((ret = server_qe_process(td, &sd->msgs_queued[i])))
+			return ret;
+	}
+
+	/* progress the queue */
+	for (i = 0; i < sd->msg_queued_nr - qes_to_process; ++i) {
+		memcpy(&sd->msgs_queued[i], &sd->msgs_queued[qes_to_process + i],
+				sizeof(struct rpma_completion));
+	}
+	sd->msg_queued_nr -= qes_to_process;
+
+	return 0;
+}
+
+static int server_cmpl_process(struct thread_data *td)
+{
+	struct server_data *sd = td->io_ops_data;
+	struct rpma_completion *cmpl = &sd->msgs_queued[sd->msg_queued_nr];
+	int ret;
+
+	ret = rpma_conn_completion_get(sd->conn, cmpl);
+	if (ret == RPMA_E_NO_COMPLETION) {
+		/* lack of completion is not an error */
+		return 0;
+	} else if (ret != 0) {
+		rpma_td_verror(td, ret, "rpma_conn_completion_get");
+		goto err_terminate;
+	}
+
+	/* validate the completion */
+	if (cmpl->op_status != IBV_WC_SUCCESS)
+		goto err_terminate;
+
+	if (cmpl->op == RPMA_OP_RECV)
+		++sd->msg_queued_nr;
+	else if (cmpl->op == RPMA_OP_SEND)
+		++sd->msg_sqe_available;
 
 	return 0;
 
@@ -1488,6 +1548,9 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	int ret;
 
 	do {
+		if ((ret = server_cmpl_process(td)))
+			return FIO_Q_BUSY;
+
 		if ((ret = server_queue_process(td)))
 			return FIO_Q_BUSY;
 
