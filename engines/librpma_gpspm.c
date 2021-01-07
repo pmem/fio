@@ -557,14 +557,11 @@ static void client_cleanup(struct thread_data *td)
 static int client_get_file_size(struct thread_data *td, struct fio_file *f)
 {
 	struct client_data *cd = td->io_ops_data;
-	int ret;
 
-	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &f->real_file_size)))
-		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
-
+	f->real_file_size = cd->ws_size;
 	fio_file_set_size_known(f);
 
-	return ret;
+	return 0;
 }
 
 static int client_open_file(struct thread_data *td, struct fio_file *f)
