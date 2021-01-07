@@ -1243,7 +1243,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* calculate data for the server read */
 	ws.mr_desc_size = mr_desc_size;
-	ws.size = td_max_bs(td);
+	ws.size = td->o.size;
 	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
