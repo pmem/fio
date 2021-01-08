@@ -315,6 +315,7 @@ static int client_init(struct thread_data *td)
 	/* wait for the connection to establish */
 	ret = rpma_conn_next_event(cd->conn, &event);
 	if (ret) {
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
 		ret = -1;
