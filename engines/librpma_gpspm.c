@@ -142,7 +142,7 @@ struct client_data {
 	int io_u_completed_nr;
 };
 
-#define PORT_STR_LEN_MAX 10
+#define PORT_STR_LEN_MAX 12
 
 static int common_td_port(const char *port_base_str,
 		struct thread_data *td, char *port_out)
