@@ -158,7 +158,8 @@ static int common_td_port(const char *port_base_str,
 	}
 	port_ul += td->thread_number - 1;
 	if (port_ul >= UINT_MAX) {
-		log_err("[%u] port number (%ul) bigger than UINT_MAX\n", port_ul);
+		log_err("[%u] port number (%lu) bigger than UINT_MAX\n",
+			td->thread_number, port_ul);
 		return -1;
 	}
 
