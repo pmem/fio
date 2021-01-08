@@ -32,6 +32,9 @@
 /* ceil(a / b) = (a + b - 1) / b */
 #define CEIL(a, b) (((a) + (b) - 1) / (b))
 
+/* increment x modulo n */
+#define INC_MOD(x, n) (((x) + 1) % (n))
+
 #define MAX_MSG_SIZE (512)
 #define IO_U_BUF_LEN (2 * MAX_MSG_SIZE)
 #define SEND_OFFSET (0)
@@ -1054,8 +1057,11 @@ struct server_data {
 	uint32_t msg_sqe_available; /* # of free SQ slots */
 
 	/* in-memory queues */
-	struct rpma_completion *msgs_queued;
-	uint32_t msg_queued_nr;
+	struct rpma_completion *msgs_queued; /* ring buffer of queued messages */
+	uint32_t msgs_queued_size; /* size of the ring buffer */
+	uint32_t n_msgs_queued; /* number of elements in the ring buffer */
+	uint32_t i_msgs_write; /* write index */
+	uint32_t i_msgs_read; /* read index */
 };
 
 static int server_init(struct thread_data *td)
@@ -1077,7 +1083,8 @@ static int server_init(struct thread_data *td)
 	}
 
 	/* allocate in-memory queue */
-	sd->msgs_queued = calloc(td->o.iodepth, sizeof(struct rpma_completion));
+	sd->msgs_queued_size = td->o.iodepth;
+	sd->msgs_queued = calloc(sd->msgs_queued_size, sizeof(struct rpma_completion));
 	if (sd->msgs_queued == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_sd;
@@ -1489,22 +1496,17 @@ static inline int server_queue_process(struct thread_data *td)
 	int i;
 
 	/* min(# of queue entries, # of SQ entries available) */
-	uint32_t qes_to_process = min(sd->msg_queued_nr, sd->msg_sqe_available);
+	uint32_t qes_to_process = min(sd->n_msgs_queued, sd->msg_sqe_available);
 	if (qes_to_process == 0)
 		return 0;
 
 	/* process queued completions */
 	for (i = 0; i < qes_to_process; ++i) {
-		if ((ret = server_qe_process(td, &sd->msgs_queued[i])))
+		if ((ret = server_qe_process(td, &sd->msgs_queued[sd->i_msgs_read])))
 			return ret;
+		--sd->n_msgs_queued;
+		sd->i_msgs_read = INC_MOD(sd->i_msgs_read, sd->msgs_queued_size);
 	}
-
-	/* progress the queue */
-	for (i = 0; i < sd->msg_queued_nr - qes_to_process; ++i) {
-		memcpy(&sd->msgs_queued[i], &sd->msgs_queued[qes_to_process + i],
-				sizeof(struct rpma_completion));
-	}
-	sd->msg_queued_nr -= qes_to_process;
 
 	return 0;
 }
@@ -1512,7 +1514,7 @@ static inline int server_queue_process(struct thread_data *td)
 static int server_cmpl_process(struct thread_data *td)
 {
 	struct server_data *sd = td->io_ops_data;
-	struct rpma_completion *cmpl = &sd->msgs_queued[sd->msg_queued_nr];
+	struct rpma_completion *cmpl = &sd->msgs_queued[sd->i_msgs_write];
 	int ret;
 
 	ret = rpma_conn_completion_get(sd->conn, cmpl);
@@ -1528,9 +1530,10 @@ static int server_cmpl_process(struct thread_data *td)
 	if (cmpl->op_status != IBV_WC_SUCCESS)
 		goto err_terminate;
 
-	if (cmpl->op == RPMA_OP_RECV)
-		++sd->msg_queued_nr;
-	else if (cmpl->op == RPMA_OP_SEND)
+	if (cmpl->op == RPMA_OP_RECV) {
+		++sd->n_msgs_queued;
+		sd->i_msgs_write = INC_MOD(sd->i_msgs_write, sd->msgs_queued_size);
+	} else if (cmpl->op == RPMA_OP_SEND)
 		++sd->msg_sqe_available;
 
 	return 0;
