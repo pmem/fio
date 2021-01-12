@@ -371,7 +371,7 @@ err_free_io_us_queued:
 err_free_cd:
 	free(cd);
 
-	return ret;
+	return (ret != 0 ? ret : 1);
 }
 
 static int client_post_init(struct thread_data *td)
