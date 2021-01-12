@@ -20,4 +20,4 @@ create_serialize=0
 num_jobs=1 [has to be the same as the value provided for the client]
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 size=[size of workspace for a single connection]
-mem=mmap:/path/to/pmem_file # [device dax or an existing fsdax file]
+filename=[device dax or an existing fsdax file or "malloc" for allocation from DRAM]
