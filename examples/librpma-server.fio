@@ -6,16 +6,18 @@
 [global]
 ioengine=librpma_server
 bindname=[IP address to listen on]
-port=[port to listen on]
+port=[base port; ports <port; port + numjobs - 1> will be used]
 thread
 
-# The server side spawns a single thread, opens and registers the whole
-# provided memory. The server accepts a connection, waits for it to end up,
+# The server side spawns one thread for each expected connection from
+# the client side, opens and registers the whole provided memory.
+# Each of the server threads accepts a connection on the dedicated port
+# (different for each and every working thread) and waits for it to end up,
 # and closes itself.
 
 [server]
 create_serialize=0
+num_jobs=1 [has to be the same as the value provided for the client]
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
-num_conns=[total # of connections]
 size=[size of workspace for a single connection]
 mem=mmap:/path/to/pmem_file # [device dax or an existing fsdax file]
