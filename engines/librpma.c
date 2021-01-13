@@ -106,12 +106,40 @@ struct client_data {
 	int io_u_completed_nr;
 };
 
+#define PORT_STR_LEN_MAX 12
+
+static int common_td_port(const char *port_base_str,
+		struct thread_data *td, char *port_out)
+{
+	unsigned long int port_ul = strtoul(port_base_str, NULL, 10);
+	unsigned int port_new;
+
+	port_out[0] = '\0';
+
+	if (port_ul == ULONG_MAX) {
+		td_verror(td, errno, "strtoul");
+		return -1;
+	}
+	port_ul += td->thread_number - 1;
+	if (port_ul >= UINT_MAX) {
+		log_err("[%u] port number (%lu) bigger than UINT_MAX\n",
+			td->thread_number, port_ul);
+		return -1;
+	}
+
+	port_new = port_ul;
+	snprintf(port_out, PORT_STR_LEN_MAX - 1, "%u", port_new);
+
+	return 0;
+}
+
 static int client_init(struct thread_data *td)
 {
 	struct client_options *o = td->eo;
 	struct client_data *cd;
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_cfg *cfg = NULL;
+	char port_td[PORT_STR_LEN_MAX];
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	uint32_t cq_size;
@@ -237,7 +265,9 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* create a connection request */
-	ret = rpma_conn_req_new(cd->peer, o->hostname, o->port, cfg, &req);
+	if ((ret = common_td_port(o->port, td, port_td)))
+		goto err_peer_delete;
+	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
@@ -870,7 +900,6 @@ struct server_options {
 	void *pad;
 	char *bindname;
 	char *port;
-	unsigned int num_conns;
 };
 
 static struct fio_option fio_server_options[] = {
@@ -895,30 +924,18 @@ static struct fio_option fio_server_options[] = {
 		.group	= FIO_OPT_G_LIBRPMA,
 	},
 	{
-		.name	= "num_conns",
-		.lname	= "Number of connections",
-		.type	= FIO_OPT_INT,
-		.off1	= offsetof(struct server_options, num_conns),
-		.help	= "Number of connections to server",
-		.minval = 1,
-		.def	= "1",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA,
-	},
-	{
 		.name	= NULL,
 	},
 };
 
 struct server_data {
 	struct rpma_peer *peer;
-	struct rpma_ep *ep;
 
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
 
-	struct workspace ws;
-	struct rpma_conn_private_data pdata;
+	/* resources of an incoming connection */
+	struct rpma_conn *conn;
 
 	/* size of the mapped persistent memory */
 	size_t size_pmem;
@@ -978,21 +995,17 @@ static int server_init(struct thread_data *td)
 		goto err_free_sd;
 	}
 
-	/* start a listening endpoint at addr:port */
-	ret = rpma_ep_listen(sd->peer, o->bindname, o->port, &sd->ep);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_ep_listen");
-		goto err_peer_delete;
-	}
-
 	td->io_ops_data = sd;
 
 	/*
-	 * Each connection needs its own workspace which will be allocated as
-	 * io_u. So the number of io_us has to be equal to the number of
-	 * connections the server will handle and...
+	 * XXX A connection uses workspace allocated as io_u. A single
+	 * connection requires a single workspace but it is assumed all of them
+	 * creates a continuous address space. To be fixed.
+	 *
+	 * Note: td->thread_number is used here because td->o.numjobs may be ==1
+	 * at this level.
 	 */
-	td->o.iodepth = o->num_conns;
+	td->o.iodepth = td->thread_number;
 
 	/*
 	 * ... a single io_u size has to be equal to the assumed workspace size.
@@ -1000,9 +1013,6 @@ static int server_init(struct thread_data *td)
 	td->o.max_bs[DDIR_READ] = td->o.size;
 
 	return 0;
-
-err_peer_delete:
-	(void) rpma_peer_delete(&sd->peer);
 
 err_free_sd:
 	free(sd);
@@ -1018,10 +1028,6 @@ static void server_cleanup(struct thread_data *td)
 	if (sd == NULL)
 		return;
 
-	/* shutdown the endpoint */
-	if ((ret = rpma_ep_shutdown(&sd->ep)))
-		rpma_td_verror(td, ret, "rpma_ep_shutdown");
-
 	/* free the peer */
 	if ((ret = rpma_peer_delete(&sd->peer)))
 		rpma_td_verror(td, ret, "rpma_peer_delete");
@@ -1030,9 +1036,17 @@ static void server_cleanup(struct thread_data *td)
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
 	struct server_data *sd =  td->io_ops_data;
+	struct server_options *o = td->eo;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_mr_local *mr;
 	size_t mr_desc_size;
 	size_t io_us_size;
+	struct rpma_conn_private_data pdata;
+	struct workspace ws;
+	struct rpma_conn_req *conn_req;
+	struct rpma_conn *conn;
+	char port_td[PORT_STR_LEN_MAX];
+	struct rpma_ep *ep;
 	int ret = 1;
 
 	/*
@@ -1074,23 +1088,64 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 
 	/* get the memory region's descriptor */
-	ret = rpma_mr_get_descriptor(mr, &sd->ws.descriptors[0]);
+	ret = rpma_mr_get_descriptor(mr, &ws.descriptors[0]);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_mr_get_descriptor");
 		goto err_mr_dereg;
 	}
 
 	/* prepare a workspace description */
-	sd->ws.mr_desc_size = mr_desc_size;
-	sd->ws.size = td->o.size;
+	ws.mr_desc_size = mr_desc_size;
+	ws.size = td->o.size;
+	pdata.ptr = &ws;
+	pdata.len = sizeof(struct workspace);
 
-	/* attach the workspace to private data structure */
-	sd->pdata.ptr = &sd->ws;
-	sd->pdata.len = sizeof(struct workspace);
+	/* start a listening endpoint at addr:port */
+	if ((ret = common_td_port(o->port, td, port_td)))
+		goto err_mr_dereg;
+
+	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_listen");
+		goto err_mr_dereg;
+	}
+
+	/* receive an incoming connection request */
+	if ((ret = rpma_ep_next_conn_req(ep, NULL, &conn_req)))
+		goto err_ep_shutdown;
+
+	/* accept the connection request and obtain the connection object */
+	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
+		goto err_req_delete;
+
+	/* wait for the connection to be established */
+	ret = rpma_conn_next_event(conn, &conn_event);
+	if (ret)
+		rpma_td_verror(td, ret, "rpma_conn_next_event");
+	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		ret = 1;
+	}
+	if (ret)
+		goto err_conn_delete;
+
+	/* end-point is no longer needed */
+	(void) rpma_ep_shutdown(&ep);
+
+	sd->conn = conn;
 
 	FILE_SET_ENG_DATA(f, mr);
 
 	return 0;
+
+err_conn_delete:
+	(void) rpma_conn_delete(&conn);
+
+err_req_delete:
+	(void) rpma_conn_req_delete(&conn_req);
+
+err_ep_shutdown:
+	(void) rpma_ep_shutdown(&ep);
 
 err_mr_dereg:
 	(void) rpma_mr_dereg(&mr);
@@ -1100,132 +1155,42 @@ err_mr_dereg:
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
+	struct server_data *sd =  td->io_ops_data;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_mr_local *mr = FILE_ENG_DATA(f);
 	int ret;
+	int rv;
 
-	if ((ret = rpma_mr_dereg(&mr)))
+	/* wait for the connection to be closed */
+	ret = rpma_conn_next_event(sd->conn, &conn_event);
+	if (!ret && conn_event != RPMA_CONN_CLOSED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		rv = 1;
+	}
+
+	if ((ret = rpma_conn_disconnect(sd->conn))) {
+		rpma_td_verror(td, ret, "rpma_conn_disconnect");
+		rv |= ret;
+	}
+
+	if ((ret = rpma_conn_delete(&sd->conn))) {
+		rpma_td_verror(td, ret, "rpma_conn_delete");
+		rv |= ret;
+	}
+
+	if ((ret = rpma_mr_dereg(&mr))) {
 		rpma_td_verror(td, ret, "rpma_mr_dereg");
+		rv |= ret;
+	}
 
 	FILE_SET_ENG_DATA(f, NULL);
 
 	return ret;
 }
 
-static struct rpma_conn *server_conn_establish(struct thread_data *td)
-{
-	struct server_data *sd =  td->io_ops_data;
-	struct rpma_conn_req *req;
-	struct rpma_conn *conn;
-	enum rpma_conn_event event = RPMA_CONN_UNDEFINED;
-	int ret;
-
-	/* receive an incoming connection request */
-	ret = rpma_ep_next_conn_req(sd->ep, NULL, &req);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_ep_next_conn_req");
-		return NULL;
-	}
-
-	/* accept the connection request and obtain the connection object */
-	ret = rpma_conn_req_connect(&req, &sd->pdata, &conn);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_req_connect");
-		(void) rpma_conn_req_delete(&req);
-		return NULL;
-	}
-
-	/* wait for the connection to be established */
-	ret = rpma_conn_next_event(conn, &event);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_next_event");
-		goto err_conn_delete;
-	}
-	if (event != RPMA_CONN_ESTABLISHED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
-			rpma_utils_conn_event_2str(event));
-		goto err_conn_delete;
-	}
-
-	return conn;
-
-err_conn_delete:
-	(void) rpma_conn_disconnect(conn);
-	(void) rpma_conn_delete(&conn);
-
-	return NULL;
-}
-
-static void server_conn_shutdown(struct thread_data *td, struct rpma_conn *conn)
-{
-	enum rpma_conn_event event = RPMA_CONN_UNDEFINED;
-	int ret;
-
-	/* wait for the connection to be closed */
-	ret = rpma_conn_next_event(conn, &event);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_next_event");
-	} else if (event != RPMA_CONN_CLOSED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_CLOSED)\n",
-			rpma_utils_conn_event_2str(event));
-	}
-
-	(void) rpma_conn_disconnect(conn);
-	(void) rpma_conn_delete(&conn);
-}
-
 static enum fio_q_status server_queue(struct thread_data *td,
 					struct io_u *io_u)
 {
-	struct server_options *o = td->eo;
-	struct rpma_conn **conns;
-	int i;
-
-	/* prepare space for connection objects */
-	conns = calloc(o->num_conns, sizeof(struct rpma_conn *));
-	if (conns == NULL) {
-		td_verror(td, errno, "calloc");
-
-		td->terminate = true;
-
-		return FIO_Q_COMPLETED;
-	}
-
-	/* establish all connections */
-	for (i = 0; i < o->num_conns; ++i) {
-		conns[i] = server_conn_establish(td);
-		if (NULL == conns[i])
-			break;
-	}
-
-	/* if establishing the connections has been interrupted */
-	if (i != o->num_conns) {
-		/* close all already established connections */
-		for (i = 0; i < o->num_conns && conns[i] != NULL; ++i) {
-			(void) rpma_conn_disconnect(conns[i]);
-			(void) rpma_conn_delete(&conns[i]);
-		}
-
-		/* free space of connection objects */
-		free(conns);
-
-		td->terminate = true;
-
-		return FIO_Q_COMPLETED;
-	}
-
-	/* close all connections */
-	for (i = 0; i < o->num_conns; ++i) {
-		server_conn_shutdown(td, conns[i]);
-		conns[i] = NULL;
-	}
-
-	/* free space of connection objects */
-	free(conns);
-
-	td->done = true;
-
 	return FIO_Q_COMPLETED;
 }
 
