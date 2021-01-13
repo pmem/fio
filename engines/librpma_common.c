@@ -17,6 +17,8 @@
 
 #include "librpma_common.h"
 
+#include <libpmem.h>
+
 int librpma_common_td_port(const char *port_base_str,
 		struct thread_data *td, char *port_out)
 {
@@ -40,4 +42,69 @@ int librpma_common_td_port(const char *port_base_str,
 	snprintf(port_out, LIBRPMA_COMMON_PORT_STR_LEN_MAX - 1, "%u", port_new);
 
 	return 0;
+}
+
+
+char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
+	size_t size, struct librpma_common_mem *mem)
+{
+	size_t size_mmap = 0;
+	char *mem_ptr = NULL;
+	int is_pmem = 0;
+	/* XXX assuming size is page aligned */
+	size_t ws_offset = (td->thread_number - 1) * size;
+
+	if (!filename) {
+		log_err("fio: filename is not set\n");
+		return NULL;
+	}
+
+	/* map the file */
+	mem_ptr = pmem_map_file(filename, 0 /* len */, 0 /* flags */,
+			0 /* mode */, &size_mmap, &is_pmem);
+	if (mem_ptr == NULL) {
+		log_err("fio: pmem_map_file(%s) failed\n", filename);
+		/* pmem_map_file() sets errno on failure */
+		td_verror(td, errno, "pmem_map_file");
+		return NULL;
+	}
+
+	/* pmem is expected */
+	if (!is_pmem) {
+		log_err("fio: %s is not located in persistent memory\n", filename);
+		goto err_unmap;
+	}
+
+	/* check size of allocated persistent memory */
+	if (size_mmap <= ws_offset) {
+		log_err(
+			"fio: %s is too small to handle so many threads (%zu <= %zu)\n",
+			filename, size_mmap, ws_offset);
+		goto err_unmap;
+	} else if (size_mmap < ws_offset + size) {
+		log_err(
+			"fio: %s is too small to handle so many threads (%zu < %zu)\n",
+			filename, size_mmap, ws_offset + size);
+		goto err_unmap;
+	}
+
+	log_info("fio: size of memory mapped from the file %s: %zu\n",
+		filename, size_mmap);
+
+	mem->mem_ptr = mem_ptr;
+	mem->size_mmap = size_mmap;
+
+	return mem_ptr + ws_offset;
+
+err_unmap:
+	(void) pmem_unmap(mem_ptr, size_mmap);
+	return NULL;
+}
+
+void librpma_common_free(struct librpma_common_mem *mem)
+{
+	if (mem->size_mmap)
+		(void) pmem_unmap(mem->mem_ptr, mem->size_mmap);
+	else
+		free(mem->mem_ptr);
 }
