@@ -931,14 +931,14 @@ static struct fio_option fio_server_options[] = {
 struct server_data {
 	struct rpma_peer *peer;
 
-	/* aligned td->orig_buffer */
-	char *orig_buffer_aligned;
-
 	/* resources of an incoming connection */
 	struct rpma_conn *conn;
 
+	/* memory buffer */
+	char *mem_ptr;
+
 	/* size of the mapped persistent memory */
-	size_t size_pmem;
+	size_t size_mmap;
 };
 
 static int server_init(struct thread_data *td)
@@ -947,26 +947,6 @@ static int server_init(struct thread_data *td)
 	struct server_data *sd;
 	struct ibv_context *dev = NULL;
 	int ret = 1;
-
-	if (td->o.mem_type == MEM_MMAP) {
-		/*
-		 * Zero mem_type if mem_type == MEM_MMAP,
-		 * because we want server_iomem_alloc() to be called
-		 * in this case, but custom iomem hooks are called
-		 * only if mem_type has never been set before.
-		 */
-		td->o.mem_type = 0;
-		/* XXX HACK - make the mem_type option unset */
-		td->o.set_options[1] &= ~(uint64_t)1;
-	} else {
-		/*
-		 * Reset iomem hooks if mem_type != MEM_MMAP,
-		 * because server_iomem_alloc() should be called
-		 * only if td->o.mem_type == MEM_MMAP.
-		 */
-		td->io_ops->iomem_alloc = NULL;
-		td->io_ops->iomem_free = NULL;
-	}
 
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
@@ -997,21 +977,6 @@ static int server_init(struct thread_data *td)
 
 	td->io_ops_data = sd;
 
-	/*
-	 * XXX A connection uses workspace allocated as io_u. A single
-	 * connection requires a single workspace but it is assumed all of them
-	 * creates a continuous address space. To be fixed.
-	 *
-	 * Note: td->thread_number is used here because td->o.numjobs may be ==1
-	 * at this level.
-	 */
-	td->o.iodepth = td->thread_number;
-
-	/*
-	 * ... a single io_u size has to be equal to the assumed workspace size.
-	 */
-	td->o.max_bs[DDIR_READ] = td->o.size;
-
 	return 0;
 
 err_free_sd:
@@ -1033,14 +998,86 @@ static void server_cleanup(struct thread_data *td)
 		rpma_td_verror(td, ret, "rpma_peer_delete");
 }
 
+static char *server_allocate_pmem(struct thread_data *td, const char *filename, size_t size)
+{
+	struct server_data *sd =  td->io_ops_data;
+	size_t size_mmap = 0;
+	char *mem_ptr = NULL;
+	int is_pmem = 0;
+
+	if (!filename) {
+		log_err("fio: filename is not set\n");
+		return NULL;
+	}
+
+	/* map the file */
+	mem_ptr = pmem_map_file(filename, 0 /* len */, 0 /* flags */,
+			0 /* mode */, &size_mmap, &is_pmem);
+	if (mem_ptr == NULL) {
+		log_err("fio: pmem_map_file(%s) failed\n", filename);
+		/* pmem_map_file() sets errno on failure */
+		td_verror(td, errno, "pmem_map_file");
+		return NULL;
+	}
+
+	/* pmem is expected */
+	if (!is_pmem) {
+		log_err("fio: %s is not located in persistent memory\n", filename);
+		(void) pmem_unmap(mem_ptr, size_mmap);
+		return NULL;
+	}
+
+	/* check size of allocated persistent memory */
+	if (size_mmap < size) {
+		log_err("fio: failed to allocate enough amount of persistent memory (%zu < %zu)\n",
+			size_mmap, size);
+		(void) pmem_unmap(mem_ptr, size_mmap);
+		return NULL;
+	}
+
+	sd->mem_ptr = mem_ptr;
+	sd->size_mmap = size_mmap;
+
+	return mem_ptr;
+}
+
+static char *server_allocate_dram(struct thread_data *td, size_t size)
+{
+	struct server_data *sd =  td->io_ops_data;
+	char *mem_ptr = NULL;
+	int ret;
+
+	if ((ret = posix_memalign((void **)&mem_ptr, page_size, size))) {
+		log_err("fio: posix_memalign() failed\n");
+		td_verror(td, ret, "posix_memalign");
+		return NULL;
+	}
+
+	sd->mem_ptr = mem_ptr;
+	sd->size_mmap = 0;
+
+	return mem_ptr;
+}
+
+static void server_free(struct thread_data *td)
+{
+	struct server_data *sd = td->io_ops_data;
+
+	if (sd->size_mmap)
+		(void) pmem_unmap(sd->mem_ptr, sd->size_mmap);
+	else
+		free(sd->mem_ptr);
+}
+
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
 	struct server_data *sd =  td->io_ops_data;
 	struct server_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_mr_local *mr;
+	char *mem_ptr = NULL;
 	size_t mr_desc_size;
-	size_t io_us_size;
+	size_t mem_size;
 	struct rpma_conn_private_data pdata;
 	struct workspace ws;
 	struct rpma_conn_req *conn_req;
@@ -1049,28 +1086,34 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_ep *ep;
 	int ret = 1;
 
-	/*
-	 * td->orig_buffer is not aligned. The engine requires aligned io_us
-	 * so FIO alignes up the address using the formula below.
-	 */
-	sd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
-			td->o.mem_align;
+	if (!f->file_name) {
+		log_err("fio: filename is not set\n");
+		return 1;
+	}
 
-	/*
-	 * td->orig_buffer_size beside the space really consumed by io_us
-	 * has paddings which can be omitted for the memory registration.
-	 */
-	io_us_size = (unsigned long long)td_max_bs(td) *
-			(unsigned long long)td->o.iodepth;
+	mem_size = td->o.size * (unsigned long long)td->thread_number;
 
-	ret = rpma_mr_reg(sd->peer, sd->orig_buffer_aligned, io_us_size,
+	if (strcmp(f->file_name, "malloc") == 0) {
+		/* allocation from DRAM using posix_memalign() */
+		mem_ptr = server_allocate_dram(td, mem_size);
+	} else {
+		/* allocation from PMEM using pmem_map_file() */
+		mem_ptr = server_allocate_pmem(td, f->file_name, mem_size);
+	}
+
+	if (mem_ptr == NULL)
+		return 1;
+
+	f->real_file_size = mem_size;
+
+	ret = rpma_mr_reg(sd->peer, mem_ptr, mem_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
 			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT,
 			&mr);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_mr_reg");
-		return 1;
+		goto err_free;
 	}
 
 	/* get size of the memory region's descriptor */
@@ -1150,7 +1193,10 @@ err_ep_shutdown:
 err_mr_dereg:
 	(void) rpma_mr_dereg(&mr);
 
-	return ret;
+err_free:
+	server_free(td);
+
+	return (ret != 0 ? ret : 1);
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
@@ -1183,6 +1229,8 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 		rv |= ret;
 	}
 
+	server_free(td);
+
 	FILE_SET_ENG_DATA(f, NULL);
 
 	return ret;
@@ -1192,69 +1240,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 					struct io_u *io_u)
 {
 	return FIO_Q_COMPLETED;
-}
-
-/*
- * server_iomem_alloc -- allocates memory from PMem using pmem_map_file()
- * (PMem version of mmap()) from the PMDK's libpmem library
- */
-static int server_iomem_alloc(struct thread_data *td, size_t size)
-{
-	struct server_data *sd =  td->io_ops_data;
-	size_t size_pmem = 0;
-	void *mem = NULL;
-	int is_pmem = 0;
-
-	if (!td->o.mmapfile) {
-		log_err("fio: mmapfile is not set\n");
-		return 1;
-	}
-
-	/* map the file */
-	mem = pmem_map_file(td->o.mmapfile, 0 /* len */, 0 /* flags */,
-			0 /* mode */, &size_pmem, &is_pmem);
-	if (mem == NULL) {
-		log_err("fio: pmem_map_file(%s) failed\n", td->o.mmapfile);
-		/* pmem_map_file() sets errno on failure */
-		td_verror(td, errno, "pmem_map_file");
-		return 1;
-	}
-
-	/* pmem is expected */
-	if (!is_pmem) {
-		log_err("fio: %s is not located in persistent memory\n", td->o.mmapfile);
-		(void) pmem_unmap(mem, size_pmem);
-		return 1;
-	}
-
-	/* check size of allocated persistent memory */
-	if (size_pmem < size) {
-		log_err("fio: failed to allocate enough amount of persistent memory (%zu < %zu)\n",
-			size_pmem, size);
-		(void) pmem_unmap(mem, size_pmem);
-		return 1;
-	}
-
-	sd->size_pmem = size_pmem;
-	td->orig_buffer = mem;
-
-	dprint(FD_MEM, "server_iomem_alloc %llu %p\n",
-		(unsigned long long) size, td->orig_buffer);
-
-	return 0;
-}
-
-static void server_iomem_free(struct thread_data *td)
-{
-	struct server_data *sd = td->io_ops_data;
-
-	if (td->orig_buffer == NULL || sd == NULL)
-		return;
-
-	(void) pmem_unmap(td->orig_buffer, sd->size_pmem);
-
-	td->orig_buffer = NULL;
-	td->orig_buffer_size = 0;
 }
 
 static int server_invalidate(struct thread_data *td, struct fio_file *file)
@@ -1272,8 +1257,6 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.queue			= server_queue,
 	.invalidate		= server_invalidate,
 	.cleanup		= server_cleanup,
-	.iomem_alloc		= server_iomem_alloc,
-	.iomem_free		= server_iomem_free,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 				  FIO_NOSTATS,
 	.options		= fio_server_options,
