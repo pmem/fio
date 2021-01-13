@@ -57,10 +57,9 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
  * Limited by the maximum length of the private data
  * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
  */
-#define DESCRIPTORS_MAX_SIZE 21
+#define DESCRIPTORS_MAX_SIZE 25
 
 struct workspace {
-	uint32_t size;		/* size of workspace for a single connection */
 	uint16_t max_msg_num;	/* # of RQ slots */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
 	/* buffer containing mr_desc */
@@ -132,7 +131,6 @@ struct client_data {
 	struct rpma_mr_local *msg_mr;
 
 	/* remote workspace description */
-	size_t ws_offset;
 	size_t ws_size;
 
 	/* in-memory queues */
@@ -315,14 +313,6 @@ static int client_init(struct thread_data *td)
 		goto err_conn_delete;
 	}
 
-	/* validate the received workspace size */
-	if (ws->size < td->o.size) {
-		log_err(
-			"received workspace size is too small (%u < %llu)\n",
-			ws->size, td->o.size);
-		goto err_conn_delete;
-	}
-
 	/* create the server's memory representation */
 	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
 			ws->mr_desc_size, &cd->server_mr)))
@@ -334,21 +324,7 @@ static int client_init(struct thread_data *td)
 		goto err_conn_delete;
 	}
 
-	/* validate the received workspace size */
-	cd->ws_offset = (td->thread_number - 1) * ws->size;
-	if (cd->ws_offset > server_mr_size) {
-		log_err(
-			"the workspace starts beyond the memory region (%zu > %zu)\n",
-			cd->ws_offset, server_mr_size);
-		goto err_conn_delete;
-	} else if (cd->ws_offset + ws->size > server_mr_size) {
-		log_err(
-			"the workspace ends beyond the memory region (%zu > %zu)\n",
-			cd->ws_offset + ws->size, server_mr_size);
-		goto err_conn_delete;
-	}
-
-	cd->ws_size = ws->size;
+	cd->ws_size = server_mr_size;
 	td->io_ops_data = cd;
 
 	return 0;
@@ -556,7 +532,7 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
 {
 	struct client_data *cd = td->io_ops_data;
 	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-	size_t dst_offset = cd->ws_offset + io_u->offset;
+	size_t dst_offset = io_u->offset;
 
 	int ret = rpma_write(cd->conn,
 			cd->server_mr, dst_offset,
@@ -594,7 +570,7 @@ static inline int client_io_flush(struct thread_data *td,
 	}
 
 	/* prepare a flush message and pack it to a send buffer */
-	flush_req.offset = cd->ws_offset + first_io_u->offset;
+	flush_req.offset = first_io_u->offset;
 	flush_req.length = len;
 	flush_req.op_context = last_io_u->index;
 	flush_req_size = gpspm_flush_request__get_packed_size(&flush_req);
@@ -1016,11 +992,9 @@ struct server_data {
 	/* resources of an incoming connection */
 	struct rpma_conn *conn;
 
-	/* memory mapped from a file */
-	void *mmap_ptr;
-	/* size of the mapped memory from a file */
-	size_t mmap_size;
-	struct rpma_mr_local *mmap_mr;
+	struct librpma_common_mem mem;
+	char *ws_ptr;
+	struct rpma_mr_local *ws_mr;
 
 	/* resources for messaging buffer from DRAM allocated by fio */
 	struct rpma_mr_local *msg_mr;
@@ -1157,6 +1131,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct server_data *sd =  td->io_ops_data;
 	struct server_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
+	size_t mem_size = td->o.size;
 	struct rpma_conn_private_data pdata;
 	struct rpma_mr_local *mmap_mr;
 	struct workspace ws;
@@ -1166,9 +1141,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
 	struct rpma_ep *ep;
 	size_t mr_desc_size;
-	size_t mmap_size = 0;
-	void *mmap_ptr;
-	int mmap_is_pmem;
+	void *ws_ptr;
 	int ret;
 	int i;
 
@@ -1184,36 +1157,15 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 	ws.max_msg_num = td->o.iodepth;
 
-	/* map the file */
-	mmap_ptr = pmem_map_file(f->file_name, 0 /* len */, 0 /* flags */,
-			0 /* mode */, &mmap_size, &mmap_is_pmem);
-	if (mmap_ptr == NULL) {
-		log_err("fio: pmem_map_file(%s) failed\n", f->file_name);
-		/* pmem_map_file() sets errno on failure */
-		td_verror(td, errno, "pmem_map_file");
+	/* allocation from PMEM using pmem_map_file() */
+	ws_ptr = librpma_common_allocate_pmem(td, f->file_name, mem_size,
+			&sd->mem);
+	if (ws_ptr == NULL)
 		return 1;
-	}
-	/*
-	 * XXX the server-side does not execute any FIO-provided IO against
-	 * the file so it also does not needs its size. Maybe there is
-	 * a better way to have io_u buffers without linking them in any way
-	 * with this file.
-	 */
-	f->real_file_size = mmap_size;
 
-	if (!mmap_is_pmem)
-		log_info("fio: %s is not located in persistent memory\n",
-			f->file_name);
+	f->real_file_size = mem_size;
 
-	log_info("fio: size of memory mapped from the file %s: %zu\n",
-		f->file_name, mmap_size);
-
-	/*
-	 * XXX since a pair of client's and server's thread will work only on
-	 * a dedicated workspace there is no point in registering the whole
-	 * provided memory for each of the working threads.
-	 */
-	ret = rpma_mr_reg(sd->peer, mmap_ptr, mmap_size,
+	ret = rpma_mr_reg(sd->peer, ws_ptr, mem_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
 			&mmap_mr);
@@ -1233,7 +1185,6 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* calculate data for the server read */
 	ws.mr_desc_size = mr_desc_size;
-	ws.size = td->o.size;
 	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
@@ -1314,9 +1265,8 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	/* end-point is no longer needed */
 	(void) rpma_ep_shutdown(&ep);
 
-	sd->mmap_mr = mmap_mr;
-	sd->mmap_ptr = mmap_ptr;
-	sd->mmap_size = mmap_size;
+	sd->ws_ptr = ws_ptr;
+	sd->ws_mr = mmap_mr;
 	sd->conn = conn;
 
 	return 0;
@@ -1337,7 +1287,7 @@ err_mr_dereg:
 	(void) rpma_mr_dereg(&mmap_mr);
 
 err_pmem_unmap:
-	(void) pmem_unmap(mmap_ptr, mmap_size);
+	librpma_common_free(&sd->mem);
 
 	return 1;
 }
@@ -1366,15 +1316,12 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 		rv |= ret;
 	}
 
-	if ((ret = rpma_mr_dereg(&sd->mmap_mr))) {
+	if ((ret = rpma_mr_dereg(&sd->ws_mr))) {
 		rpma_td_verror(td, ret, "rpma_mr_dereg");
 		rv |= ret;
 	}
 
-	if (pmem_unmap(sd->mmap_ptr, sd->mmap_size)) {
-		td_verror(td, errno, "pmem_unmap");
-		rv |= errno;
-	}
+	librpma_common_free(&sd->mem);
 
 	return rv ? -1 : 0;
 }
@@ -1410,7 +1357,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	if (IS_NOT_THE_LAST_MESSAGE(flush_req)) {
-		op_ptr = (char *)sd->mmap_ptr + flush_req->offset;
+		op_ptr = sd->ws_ptr + flush_req->offset;
 		pmem_persist(op_ptr, flush_req->length);
 	} else {
 		/*
