@@ -319,7 +319,6 @@ static int client_init(struct thread_data *td)
 		rpma_td_verror(td, ret, "rpma_conn_next_event");
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
-		ret = -1;
 		log_err(
 			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
 			rpma_utils_conn_event_2str(event));
@@ -404,7 +403,7 @@ err_free_io_us_queued:
 err_free_cd:
 	free(cd);
 
-	return ret;
+	return 1;
 }
 
 static int client_post_init(struct thread_data *td)
@@ -1109,7 +1108,7 @@ err_free_msg_queue:
 err_free_sd:
 	free(sd);
 
-	return ret;
+	return 1;
 }
 
 static int server_post_init(struct thread_data *td)
@@ -1332,10 +1331,8 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	ret = rpma_conn_next_event(conn, &conn_event);
 	if (ret)
 		rpma_td_verror(td, ret, "rpma_conn_next_event");
-	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
+	if (!ret && conn_event != RPMA_CONN_ESTABLISHED)
 		log_err("rpma_conn_next_event returned an unexptected event\n");
-		ret = 1;
-	}
 	if (ret)
 		goto err_conn_delete;
 
@@ -1367,7 +1364,7 @@ err_mr_dereg:
 err_pmem_unmap:
 	(void) pmem_unmap(mmap_ptr, mmap_size);
 
-	return ret;
+	return 1;
 }
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
