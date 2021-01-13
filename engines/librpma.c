@@ -371,7 +371,7 @@ err_free_io_us_queued:
 err_free_cd:
 	free(cd);
 
-	return ret;
+	return 1;
 }
 
 static int client_post_init(struct thread_data *td)
@@ -1007,7 +1007,7 @@ err_peer_delete:
 err_free_sd:
 	free(sd);
 
-	return ret;
+	return 1;
 }
 
 static void server_cleanup(struct thread_data *td)
