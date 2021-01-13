@@ -885,11 +885,7 @@ struct server_data {
 	/* resources of an incoming connection */
 	struct rpma_conn *conn;
 
-	/* memory buffer */
-	char *mem_ptr;
-
-	/* size of the mapped persistent memory */
-	size_t size_mmap;
+	struct librpma_common_mem mem;
 };
 
 static int server_init(struct thread_data *td)
@@ -949,58 +945,9 @@ static void server_cleanup(struct thread_data *td)
 		rpma_td_verror(td, ret, "rpma_peer_delete");
 }
 
-static char *server_allocate_pmem(struct thread_data *td, const char *filename, size_t size)
+static char *server_allocate_dram(struct thread_data *td, size_t size,
+	struct librpma_common_mem *mem)
 {
-	struct server_data *sd =  td->io_ops_data;
-	size_t size_mmap = 0;
-	char *mem_ptr = NULL;
-	int is_pmem = 0;
-
-	/* XXX assuming size is page aligned */
-	size_t ws_offset = (td->thread_number - 1) * size;
-
-	if (!filename) {
-		log_err("fio: filename is not set\n");
-		return NULL;
-	}
-
-	/* map the file */
-	mem_ptr = pmem_map_file(filename, 0 /* len */, 0 /* flags */,
-			0 /* mode */, &size_mmap, &is_pmem);
-	if (mem_ptr == NULL) {
-		log_err("fio: pmem_map_file(%s) failed\n", filename);
-		/* pmem_map_file() sets errno on failure */
-		td_verror(td, errno, "pmem_map_file");
-		return NULL;
-	}
-
-	/* pmem is expected */
-	if (!is_pmem) {
-		log_err("fio: %s is not located in persistent memory\n", filename);
-		goto err_unmap;
-	}
-
-	/* check size of allocated persistent memory */
-	if (size_mmap < ws_offset + size) {
-		log_err(
-			"fio: %s is too small to handle so many threads (%zu < %zu)\n",
-			filename, size_mmap, ws_offset + size);
-		goto err_unmap;
-	}
-
-	sd->mem_ptr = mem_ptr;
-	sd->size_mmap = size_mmap;
-
-	return mem_ptr + ws_offset;
-
-err_unmap:
-	(void) pmem_unmap(mem_ptr, size_mmap);
-	return NULL;
-}
-
-static char *server_allocate_dram(struct thread_data *td, size_t size)
-{
-	struct server_data *sd =  td->io_ops_data;
 	char *mem_ptr = NULL;
 	int ret;
 
@@ -1010,20 +957,10 @@ static char *server_allocate_dram(struct thread_data *td, size_t size)
 		return NULL;
 	}
 
-	sd->mem_ptr = mem_ptr;
-	sd->size_mmap = 0;
+	mem->mem_ptr = mem_ptr;
+	mem->size_mmap = 0;
 
 	return mem_ptr;
-}
-
-static void server_free(struct thread_data *td)
-{
-	struct server_data *sd = td->io_ops_data;
-
-	if (sd->size_mmap)
-		(void) pmem_unmap(sd->mem_ptr, sd->size_mmap);
-	else
-		free(sd->mem_ptr);
 }
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
@@ -1050,10 +987,11 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	if (strcmp(f->file_name, "malloc") == 0) {
 		/* allocation from DRAM using posix_memalign() */
-		mem_ptr = server_allocate_dram(td, mem_size);
+		mem_ptr = server_allocate_dram(td, mem_size, &sd->mem);
 	} else {
 		/* allocation from PMEM using pmem_map_file() */
-		mem_ptr = server_allocate_pmem(td, f->file_name, mem_size);
+		mem_ptr = librpma_common_allocate_pmem(td, f->file_name,
+				mem_size, &sd->mem);
 	}
 
 	if (mem_ptr == NULL)
@@ -1148,7 +1086,7 @@ err_mr_dereg:
 	(void) rpma_mr_dereg(&mr);
 
 err_free:
-	server_free(td);
+	librpma_common_free(&sd->mem);
 
 	return (ret != 0 ? ret : 1);
 }
@@ -1183,7 +1121,7 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 		rv |= ret;
 	}
 
-	server_free(td);
+	librpma_common_free(&sd->mem);
 
 	FILE_SET_ENG_DATA(f, NULL);
 
