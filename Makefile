@@ -101,13 +101,18 @@ ifdef CONFIG_RDMA
 endif
 ifdef CONFIG_LIBRPMA
   librpma_SRCS = engines/librpma.c
+  librpma_common_SRCS = engines/librpma_common.c
   librpma_LIBS = -lrpma -lpmem
   ENGINES += librpma
 endif
 ifdef CONFIG_LIBRPMA_GPSPM
   librpma_gpspm_SRCS = engines/librpma_gpspm.c engines/librpma_gpspm_flush.pb-c.c
+  librpma_common_SRCS = engines/librpma_common.c 
   librpma_gpspm_LIBS = -lrpma -lpmem -lprotobuf-c
   ENGINES += librpma_gpspm
+endif
+ifdef librpma_common_SRCS
+  ENGINES += librpma_common
 endif
 ifdef CONFIG_POSIXAIO
   SOURCE += engines/posixaio.c
