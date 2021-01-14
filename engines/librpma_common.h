@@ -42,4 +42,29 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 
 void librpma_common_free(struct librpma_common_mem *mem);
 
+struct librpma_common_client_data {
+	struct rpma_peer *peer;
+	struct rpma_conn *conn;
+
+	/* aligned td->orig_buffer */
+	char *orig_buffer_aligned;
+
+	/* ious's base address memory registration (cd->orig_buffer_aligned) */
+	struct rpma_mr_local *orig_mr;
+
+	/* a server's memory representation */
+	struct rpma_mr_remote *server_mr;
+
+	/* remote workspace description */
+	size_t ws_size;
+
+	/* in-memory queues */
+	struct io_u **io_us_queued;
+	int io_u_queued_nr;
+	struct io_u **io_us_flight;
+	int io_u_flight_nr;
+	struct io_u **io_us_completed;
+	int io_u_completed_nr;
+};
+
 #endif /* LIBRPMA_COMMON_H */
