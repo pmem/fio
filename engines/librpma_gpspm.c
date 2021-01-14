@@ -134,6 +134,117 @@ struct client_data {
 	int io_u_completed_nr;
 };
 
+static int client_not_supported(struct thread_data *td)
+{
+	/* not supported readwrite = read / trim / randread / randtrim / rw / randrw / trimwrite */
+	if (td_read(td) || td_trim(td)) {
+		log_err("Not supported mode.\n");
+		return 1;
+	}
+
+	return 0;
+}
+
+static int client_conn_cfg_new(struct thread_data *td,
+		struct rpma_conn_cfg **cfg_ptr)
+{
+	uint32_t write_num;
+	uint32_t msg_num;
+	int ret;
+
+	/* create a connection configuration object */
+	ret = rpma_conn_cfg_new(cfg_ptr);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		return ret;
+	}
+
+	/*
+	 * Calculate the required number of WRITEs and FLUSHes.
+	 *
+	 * Note: Each flush is a request (SEND) and response (RECV) pair.
+	 */
+	if (td_random(td)) {
+		write_num = td->o.iodepth; /* WRITE * N */
+		msg_num = td->o.iodepth; /* FLUSH * N */
+	} else {
+		if (td->o.sync_io) {
+			write_num = 1; /* WRITE */
+			msg_num = 1; /* FLUSH */
+		} else {
+			write_num = td->o.iodepth; /* WRITE * N */
+			/*
+			 * FLUSH * B where:
+			 * - B == ceil(iodepth / iodepth_batch)
+			 *   which is the number of batches for N writes
+			 */
+			msg_num = LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
+		}
+	}
+
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all io_us (WRITEs) and all flush requests (SENDs)
+	 * - the receive queue (RQ) has to be big enough to accommodate all flush
+	 *   responses (RECVs)
+	 * - the completion queue (CQ) has to be big enough to accommodate all
+	 *   success and error completions (sq_size + rq_size)
+	 */
+	ret = rpma_conn_cfg_set_sq_size(*cfg_ptr, write_num + msg_num);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		goto err_cfg_delete;
+	}
+	ret = rpma_conn_cfg_set_rq_size(*cfg_ptr, msg_num);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
+	ret = rpma_conn_cfg_set_cq_size(*cfg_ptr, write_num + msg_num * 2);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		goto err_cfg_delete;
+	}
+
+	return 0;
+
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(cfg_ptr);
+	return ret;
+}
+
+static int client_ws_validate(struct thread_data *td, char *ws_ptr)
+{
+	struct client_data *cd =  td->io_ops_data;
+	struct workspace *ws = ws_ptr;
+	size_t server_mr_size;
+	int ret;
+
+	/* validate the server's RQ capacity */
+	if (cd->msg_num > ws->max_msg_num) {
+		log_err(
+			"server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
+			ws->max_msg_num, cd->msg_num);
+		return 1;
+	}
+
+	/* create the server's memory representation */
+	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
+			ws->mr_desc_size, &cd->server_mr)))
+		return ret;
+
+	/* get the total size of the shared server memory */
+	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
+		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+		return ret;
+	}
+
+	cd->ws_size = server_mr_size;
+
+	return 0;
+}
+
 static int client_init(struct thread_data *td)
 {
 	struct client_options *o = td->eo;
@@ -143,27 +254,24 @@ static int client_init(struct thread_data *td)
 	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
-	uint32_t write_num;
 	struct rpma_conn_private_data pdata;
-	struct workspace *ws;
-	size_t server_mr_size;
 	int ret = 1;
+
+	if (client_not_supported(td))
+		return 1;
+
+	if ((ret = client_conn_cfg_new(td, &cfg)))
+		return ret;
 
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
-	
-	/* not supported readwrite = read / trim / randread / randtrim / rw / randrw / trimwrite */
-	if (td_read(td) || td_trim(td)) {
-		log_err("Not supported mode.\n");
-		return 1;
-	}
 
 	/* allocate client's data */
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		goto err_cfg_delete;
 	}
 
 	/* allocate all in-memory queues */
@@ -194,66 +302,11 @@ static int client_init(struct thread_data *td)
 		goto err_free_io_us_completed;
 	}
 
-	/* create a connection configuration object */
-	ret = rpma_conn_cfg_new(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_free_io_us_completed;
-	}
-
-	/*
-	 * Calculate the required number of WRITEs and FLUSHes.
-	 *
-	 * Note: Each flush is a request (SEND) and response (RECV) pair.
-	 */
-	if (td_random(td)) {
-		write_num = td->o.iodepth; /* WRITE * N */
-		cd->msg_num = td->o.iodepth; /* FLUSH * N */
-	} else {
-		if (td->o.sync_io) {
-			write_num = 1; /* WRITE */
-			cd->msg_num = 1; /* FLUSH */
-		} else {
-			write_num = td->o.iodepth; /* WRITE * N */
-			/*
-			 * FLUSH * B where:
-			 * - B == ceil(iodepth / iodepth_batch)
-			 *   which is the number of batches for N writes
-			 */
-			cd->msg_num = LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
-		}
-	}
-
-	/*
-	 * Calculate the required queue sizes where:
-	 * - the send queue (SQ) has to be big enough to accommodate
-	 *   all io_us (WRITEs) and all flush requests (SENDs)
-	 * - the receive queue (RQ) has to be big enough to accommodate all flush
-	 *   responses (RECVs)
-	 * - the completion queue (CQ) has to be big enough to accommodate all
-	 *   success and error completions (sq_size + rq_size)
-	 */
-	ret = rpma_conn_cfg_set_sq_size(cfg, write_num + cd->msg_num);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
-		goto err_cfg_delete;
-	}
-	ret = rpma_conn_cfg_set_rq_size(cfg, cd->msg_num);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
-		goto err_cfg_delete;
-	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, write_num + cd->msg_num * 2);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
-		goto err_cfg_delete;
-	}
-	
 	/* create a new peer object */
 	ret = rpma_peer_new(dev, &cd->peer);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_peer_new");
-		goto err_cfg_delete;
+		goto err_free_io_us_completed;
 	}
 
 	/* create a connection request */
@@ -262,12 +315,6 @@ static int client_init(struct thread_data *td)
 	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
-		goto err_peer_delete;
-	}
-
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		goto err_peer_delete;
 	}
 
@@ -294,32 +341,12 @@ static int client_init(struct thread_data *td)
 	if ((ret = rpma_conn_get_private_data(cd->conn, &pdata)))
 		goto err_conn_delete;
 
-	/* create the server's workspace representation */
-	ws = pdata.ptr;
-
-	/* validate the server's RQ capacity */
-	if (cd->msg_num > ws->max_msg_num) {
-		log_err(
-			"server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
-			ws->max_msg_num, cd->msg_num);
-		goto err_conn_delete;
-	}
-
-	/* create the server's memory representation */
-	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
-			ws->mr_desc_size, &cd->server_mr)))
-		goto err_conn_delete;
-
-	/* get the total size of the shared server memory */
-	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
-		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
-		goto err_conn_delete;
-	}
-
-	cd->ws_size = server_mr_size;
 	td->io_ops_data = cd;
 
-	return 0;
+	if ((ret = client_ws_validate(td, pdata.ptr)))
+		goto err_conn_delete;
+
+	return client_conn_cfg_delete(td, &cfg);
 
 err_conn_delete:
 	(void) rpma_conn_disconnect(cd->conn);
@@ -330,9 +357,6 @@ err_req_delete:
 		(void) rpma_conn_req_delete(&req);
 err_peer_delete:
 	(void) rpma_peer_delete(&cd->peer);
-
-err_cfg_delete:
-	(void) rpma_conn_cfg_delete(&cfg);
 
 err_free_io_us_completed:
 	free(cd->io_us_completed);
@@ -345,6 +369,9 @@ err_free_io_us_queued:
 
 err_free_cd:
 	free(cd);
+
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(&cfg);
 
 	return 1;
 }
