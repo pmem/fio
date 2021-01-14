@@ -18,6 +18,14 @@
 
 #include "../fio.h"
 
+/* XXX to be renamed with appropriate prefix */
+#define rpma_td_verror(td, err, func) \
+	td_vmsg((td), (err), rpma_err_2str(err), (func))
+
+/* XXX to be renamed with appropriate prefix */
+/* ceil(a / b) = (a + b - 1) / b */
+#define CEIL(a, b) (((a) + (b) - 1) / (b))
+
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
 
 int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
