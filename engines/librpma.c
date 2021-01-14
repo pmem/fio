@@ -34,10 +34,9 @@
  * Limited by the maximum length of the private data
  * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
  */
-#define DESCRIPTORS_MAX_SIZE 23
+#define DESCRIPTORS_MAX_SIZE 27
 
 struct workspace {
-	uint32_t size;		/* size of workspace for a single connection */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
 	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
@@ -96,7 +95,6 @@ struct client_data {
 	struct rpma_mr_remote *server_mr;
 
 	/* remote workspace description */
-	size_t ws_offset;
 	size_t ws_size;
 
 	/* in-memory queues */
@@ -278,14 +276,6 @@ static int client_init(struct thread_data *td)
 
 	ws = pdata.ptr;
 
-	/* validate the received workspace size */
-	if (ws->size < td->o.size) {
-		log_err(
-			"received workspace size is too small (%u < %llu)\n",
-			ws->size, td->o.size);
-		goto err_conn_delete;
-	}
-
 	/* create the server's memory representation */
 	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
 			ws->mr_desc_size, &cd->server_mr)))
@@ -294,20 +284,6 @@ static int client_init(struct thread_data *td)
 	/* get the total size of the shared server memory */
 	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
 		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
-		goto err_conn_delete;
-	}
-
-	/* validate the received workspace size */
-	cd->ws_offset = (td->thread_number - 1) * ws->size;
-	if (cd->ws_offset > server_mr_size) {
-		log_err(
-			"the workspace starts beyond the memory region (%zu > %zu)\n",
-			cd->ws_offset, server_mr_size);
-		goto err_conn_delete;
-	} else if (cd->ws_offset + ws->size > server_mr_size) {
-		log_err(
-			"the workspace ends beyond the memory region (%zu > %zu)\n",
-			cd->ws_offset + ws->size, server_mr_size);
 		goto err_conn_delete;
 	}
 
@@ -343,7 +319,7 @@ static int client_init(struct thread_data *td)
 		(void) rpma_peer_cfg_delete(&pcfg);
 	}
 
-	cd->ws_size = ws->size;
+	cd->ws_size = server_mr_size;
 	td->io_ops_data = cd;
 
 	return 0;
@@ -481,7 +457,7 @@ static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int 
 {
 	struct client_data *cd = td->io_ops_data;
 	size_t dst_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-	size_t src_offset = cd->ws_offset + io_u->offset;
+	size_t src_offset = io_u->offset;
 	int ret = rpma_read(cd->conn,
 			cd->orig_mr, dst_offset,
 			cd->server_mr, src_offset,
@@ -500,7 +476,7 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int
 {
 	struct client_data *cd = td->io_ops_data;
 	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
-	size_t dst_offset = cd->ws_offset + io_u->offset;
+	size_t dst_offset = io_u->offset;
 
 	int ret = rpma_write(cd->conn,
 			cd->server_mr, dst_offset,
@@ -521,7 +497,7 @@ static inline int client_io_flush(struct thread_data *td,
 		unsigned long long int len)
 {
 	struct client_data *cd = td->io_ops_data;
-	size_t dst_offset = cd->ws_offset + first_io_u->offset;
+	size_t dst_offset = first_io_u->offset;
 
 	int ret = rpma_flush(cd->conn, cd->server_mr, dst_offset, len,
 		cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
@@ -980,6 +956,9 @@ static char *server_allocate_pmem(struct thread_data *td, const char *filename, 
 	char *mem_ptr = NULL;
 	int is_pmem = 0;
 
+	/* XXX assuming size is page aligned */
+	size_t ws_offset = (td->thread_number - 1) * size;
+
 	if (!filename) {
 		log_err("fio: filename is not set\n");
 		return NULL;
@@ -998,22 +977,25 @@ static char *server_allocate_pmem(struct thread_data *td, const char *filename, 
 	/* pmem is expected */
 	if (!is_pmem) {
 		log_err("fio: %s is not located in persistent memory\n", filename);
-		(void) pmem_unmap(mem_ptr, size_mmap);
-		return NULL;
+		goto err_unmap;
 	}
 
 	/* check size of allocated persistent memory */
-	if (size_mmap < size) {
-		log_err("fio: failed to allocate enough amount of persistent memory (%zu < %zu)\n",
-			size_mmap, size);
-		(void) pmem_unmap(mem_ptr, size_mmap);
-		return NULL;
+	if (size_mmap < ws_offset + size) {
+		log_err(
+			"fio: %s is too small to handle so many threads (%zu < %zu)\n",
+			filename, size_mmap, ws_offset + size);
+		goto err_unmap;
 	}
 
 	sd->mem_ptr = mem_ptr;
 	sd->size_mmap = size_mmap;
 
-	return mem_ptr;
+	return mem_ptr + ws_offset;
+
+err_unmap:
+	(void) pmem_unmap(mem_ptr, size_mmap);
+	return NULL;
 }
 
 static char *server_allocate_dram(struct thread_data *td, size_t size)
@@ -1052,7 +1034,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_mr_local *mr;
 	char *mem_ptr = NULL;
 	size_t mr_desc_size;
-	size_t mem_size;
+	size_t mem_size = td->o.size;
 	struct rpma_conn_private_data pdata;
 	struct workspace ws;
 	struct rpma_conn_req *conn_req;
@@ -1065,8 +1047,6 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		log_err("fio: filename is not set\n");
 		return 1;
 	}
-
-	mem_size = td->o.size * (unsigned long long)td->thread_number;
 
 	if (strcmp(f->file_name, "malloc") == 0) {
 		/* allocation from DRAM using posix_memalign() */
@@ -1114,7 +1094,6 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* prepare a workspace description */
 	ws.mr_desc_size = mr_desc_size;
-	ws.size = td->o.size;
 	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
