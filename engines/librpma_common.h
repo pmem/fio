@@ -42,4 +42,20 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 
 void librpma_common_free(struct librpma_common_mem *mem);
 
+struct librpma_common_client_data {
+	struct rpma_peer *peer;
+	struct rpma_conn *conn;
+
+	/* in-memory queues */
+	struct io_u **io_us_queued;
+	int io_u_queued_nr;
+	struct io_u **io_us_flight;
+	int io_u_flight_nr;
+	struct io_u **io_us_completed;
+	int io_u_completed_nr;
+};
+
+int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg,
+		struct librpma_common_client_data *ccd);
+
 #endif /* LIBRPMA_COMMON_H */
