@@ -22,14 +22,6 @@
 #include <libpmem.h>
 #include <librpma.h>
 
-/* client's and server's common */
-
-#define rpma_td_verror(td, err, func) \
-	td_vmsg((td), (err), rpma_err_2str(err), (func))
-
-/* ceil(a / b) = (a + b - 1) / b */
-#define CEIL(a, b) (((a) + (b) - 1) / (b))
-
 /*
  * Limited by the maximum length of the private data
  * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
