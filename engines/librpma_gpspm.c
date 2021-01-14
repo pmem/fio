@@ -190,14 +190,14 @@ static int client_init(struct thread_data *td)
 				RPMA_UTIL_IBV_CONTEXT_REMOTE,
 				&dev);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_io_us_completed;
 	}
 
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
 		goto err_free_io_us_completed;
 	}
 
@@ -220,7 +220,7 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			cd->msg_num = CEIL(td->o.iodepth, td->o.iodepth_batch);
+			cd->msg_num = LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
 		}
 	}
 
@@ -235,24 +235,24 @@ static int client_init(struct thread_data *td)
 	 */
 	ret = rpma_conn_cfg_set_sq_size(cfg, write_num + cd->msg_num);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
 	ret = rpma_conn_cfg_set_rq_size(cfg, cd->msg_num);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
 		goto err_cfg_delete;
 	}
 	ret = rpma_conn_cfg_set_cq_size(cfg, write_num + cd->msg_num * 2);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
 	
 	/* create a new peer object */
 	ret = rpma_peer_new(dev, &cd->peer);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_peer_new");
+		librpma_td_verror(td, ret, "rpma_peer_new");
 		goto err_cfg_delete;
 	}
 
@@ -261,27 +261,27 @@ static int client_init(struct thread_data *td)
 		goto err_peer_delete;
 	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_req_new");
+		librpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
 	}
 
 	ret = rpma_conn_cfg_delete(&cfg);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		goto err_peer_delete;
 	}
 
 	/* connect the connection request and obtain the connection object */
 	ret = rpma_conn_req_connect(&req, NULL, &cd->conn);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_req_connect");
+		librpma_td_verror(td, ret, "rpma_conn_req_connect");
 		goto err_req_delete;
 	}
 
 	/* wait for the connection to establish */
 	ret = rpma_conn_next_event(cd->conn, &event);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_next_event");
+		librpma_td_verror(td, ret, "rpma_conn_next_event");
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
 		log_err(
@@ -312,7 +312,7 @@ static int client_init(struct thread_data *td)
 
 	/* get the total size of the shared server memory */
 	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
-		rpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
 		goto err_conn_delete;
 	}
 
@@ -368,7 +368,7 @@ static int client_post_init(struct thread_data *td)
 	if ((ret = rpma_mr_reg(cd->peer, cd->io_us_msgs, io_us_msgs_size,
 			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
 			&cd->msg_mr))) {
-		rpma_td_verror(td, ret, "rpma_mr_reg");
+		librpma_td_verror(td, ret, "rpma_mr_reg");
 		return ret;
 	}
 
@@ -390,7 +390,7 @@ static int client_post_init(struct thread_data *td)
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
 			&cd->orig_mr)))
-		rpma_td_verror(td, ret, "rpma_mr_reg");
+		librpma_td_verror(td, ret, "rpma_mr_reg");
 
 	return ret;
 }
@@ -424,7 +424,7 @@ static void client_cleanup(struct thread_data *td)
 			continue;
 		} else if (ret != 0) {
 			/* an error occurred */
-			rpma_td_verror(td, ret, "rpma_conn_completion_get");
+			librpma_td_verror(td, ret, "rpma_conn_completion_get");
 			break;
 		}
 
@@ -450,28 +450,28 @@ static void client_cleanup(struct thread_data *td)
 		/* send the flush message */
 		if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
 					RPMA_F_COMPLETION_ON_ERROR, NULL)))
-			rpma_td_verror(td, ret, "rpma_send");
+			librpma_td_verror(td, ret, "rpma_send");
 	}
 
 	/* deregister the iou's memory */
 	if ((ret = rpma_mr_dereg(&cd->orig_mr)))
-		rpma_td_verror(td, ret, "rpma_mr_dereg");
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
 
 	/* deregister the messaging buffer memory */
 	if ((ret = rpma_mr_dereg(&cd->msg_mr)))
-		rpma_td_verror(td, ret, "rpma_mr_dereg");
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
 
 	/* delete the iou's memory registration */
 	if ((ret = rpma_mr_remote_delete(&cd->server_mr)))
-		rpma_td_verror(td, ret, "rpma_mr_remote_delete");
+		librpma_td_verror(td, ret, "rpma_mr_remote_delete");
 
 	/* initiate disconnection */
 	if ((ret = rpma_conn_disconnect(cd->conn)))
-		rpma_td_verror(td, ret, "rpma_conn_disconnect");
+		librpma_td_verror(td, ret, "rpma_conn_disconnect");
 
 	/* wait for disconnection to end up */
 	if ((ret = rpma_conn_next_event(cd->conn, &ev))) {
-		rpma_td_verror(td, ret, "rpma_conn_next_event");
+		librpma_td_verror(td, ret, "rpma_conn_next_event");
 	} else if (ev != RPMA_CONN_CLOSED) {
 		log_err(
 			"client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
@@ -480,11 +480,11 @@ static void client_cleanup(struct thread_data *td)
 
 	/* delete the connection */
 	if ((ret = rpma_conn_delete(&cd->conn)))
-		rpma_td_verror(td, ret, "rpma_conn_delete");
+		librpma_td_verror(td, ret, "rpma_conn_delete");
 
 	/* delete the peer */
 	if ((ret = rpma_peer_delete(&cd->peer)))
-		rpma_td_verror(td, ret, "rpma_peer_delete");
+		librpma_td_verror(td, ret, "rpma_peer_delete");
 
 	/* free message buffers */
 	free(cd->io_us_msgs);
@@ -533,7 +533,7 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
 			RPMA_F_COMPLETION_ON_ERROR,
 			NULL);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_write");
+		librpma_td_verror(td, ret, "rpma_write");
 		return -1;
 	}
 
@@ -557,7 +557,7 @@ static inline int client_io_flush(struct thread_data *td,
 	int ret = rpma_recv(cd->conn, cd->msg_mr, recv_offset, MAX_MSG_SIZE,
 			recv_ptr);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_recv");
+		librpma_td_verror(td, ret, "rpma_recv");
 		return -1;
 	}
 
@@ -578,7 +578,7 @@ static inline int client_io_flush(struct thread_data *td,
 	/* send the flush message */
 	if ((ret = rpma_send(cd->conn, cd->msg_mr, send_offset, flush_req_size,
 			RPMA_F_COMPLETION_ALWAYS, NULL))) {
-		rpma_td_verror(td, ret, "rpma_send");
+		librpma_td_verror(td, ret, "rpma_send");
 		return -1;
 	}
 
@@ -614,7 +614,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			continue;
 		} else if (ret != 0) {
 			/* an error occurred */
-			rpma_td_verror(td, ret, "rpma_conn_completion_get");
+			librpma_td_verror(td, ret, "rpma_conn_completion_get");
 			goto err;
 		}
 
@@ -788,7 +788,7 @@ static int client_getevent_process(struct thread_data *td)
 		}
 
 		/* an error occurred */
-		rpma_td_verror(td, ret, "rpma_conn_completion_get");
+		librpma_td_verror(td, ret, "rpma_conn_completion_get");
 		return -1;
 	}
 
@@ -1028,14 +1028,14 @@ static int server_init(struct thread_data *td)
 				RPMA_UTIL_IBV_CONTEXT_LOCAL,
 				&dev);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_msg_queue;
 	}
 
 	/* create a new peer object */
 	ret = rpma_peer_new(dev, &sd->peer);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_peer_new");
+		librpma_td_verror(td, ret, "rpma_peer_new");
 		goto err_free_sd;
 	}
 
@@ -1091,7 +1091,7 @@ static int server_post_init(struct thread_data *td)
 			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
 			&sd->msg_mr);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_mr_reg");
+		librpma_td_verror(td, ret, "rpma_mr_reg");
 		return 1;
 	}
 
@@ -1108,11 +1108,11 @@ static void server_cleanup(struct thread_data *td)
 
 	/* rpma_mr_dereg(messaging buffer from DRAM) */
 	if ((ret = rpma_mr_dereg(&sd->msg_mr)))
-		rpma_td_verror(td, ret, "rpma_mr_dereg");
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
 
 	/* free the peer */
 	if ((ret = rpma_peer_delete(&sd->peer)))
-		rpma_td_verror(td, ret, "rpma_peer_delete");
+		librpma_td_verror(td, ret, "rpma_peer_delete");
 
 	free(sd->msgs_queued);
 	free(sd);
@@ -1162,7 +1162,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
 			&mmap_mr);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_mr_reg");
+		librpma_td_verror(td, ret, "rpma_mr_reg");
 		goto err_pmem_unmap;
 	}
 
@@ -1185,14 +1185,14 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_mr_dereg;
 	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_ep_listen");
+		librpma_td_verror(td, ret, "rpma_ep_listen");
 		goto err_mr_dereg;
 	}
 
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
 		goto err_ep_shutdown;
 	}
 
@@ -1207,17 +1207,17 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	 */
 	ret = rpma_conn_cfg_set_sq_size(cfg, ws.max_msg_num);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
 	ret = rpma_conn_cfg_set_rq_size(cfg, ws.max_msg_num);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
 		goto err_cfg_delete;
 	}
 	ret = rpma_conn_cfg_set_cq_size(cfg, ws.max_msg_num * 2);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
 
@@ -1227,7 +1227,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	ret = rpma_conn_cfg_delete(&cfg);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		goto err_req_delete;
 	}
 
@@ -1248,7 +1248,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	/* wait for the connection to be established */
 	ret = rpma_conn_next_event(conn, &conn_event);
 	if (ret)
-		rpma_td_verror(td, ret, "rpma_conn_next_event");
+		librpma_td_verror(td, ret, "rpma_conn_next_event");
 	if (!ret && conn_event != RPMA_CONN_ESTABLISHED)
 		log_err("rpma_conn_next_event returned an unexptected event\n");
 	if (ret)
@@ -1299,17 +1299,17 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 	}
 
 	if ((ret = rpma_conn_disconnect(sd->conn))) {
-		rpma_td_verror(td, ret, "rpma_conn_disconnect");
+		librpma_td_verror(td, ret, "rpma_conn_disconnect");
 		rv |= ret;
 	}
 
 	if ((ret = rpma_conn_delete(&sd->conn))) {
-		rpma_td_verror(td, ret, "rpma_conn_delete");
+		librpma_td_verror(td, ret, "rpma_conn_delete");
 		rv |= ret;
 	}
 
 	if ((ret = rpma_mr_dereg(&sd->ws_mr))) {
-		rpma_td_verror(td, ret, "rpma_mr_dereg");
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
 		rv |= ret;
 	}
 
@@ -1363,7 +1363,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	ret = rpma_recv(sd->conn, sd->msg_mr, recv_buff_offset,
 			MAX_MSG_SIZE, (const void *)(uintptr_t)msg_index);
 	if (ret) {
-		rpma_td_verror(td, ret, "rpma_recv");
+		librpma_td_verror(td, ret, "rpma_recv");
 		goto err_terminate;
 	}
 
@@ -1431,7 +1431,7 @@ static int server_cmpl_process(struct thread_data *td)
 		/* lack of completion is not an error */
 		return 0;
 	} else if (ret != 0) {
-		rpma_td_verror(td, ret, "rpma_conn_completion_get");
+		librpma_td_verror(td, ret, "rpma_conn_completion_get");
 		goto err_terminate;
 	}
 
