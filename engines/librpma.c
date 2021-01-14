@@ -98,74 +98,29 @@ struct client_data {
 	int io_u_completed_nr;
 };
 
-static int client_init(struct thread_data *td)
+static int client_not_supported(struct thread_data *td)
 {
-	struct client_options *o = td->eo;
-	struct client_data *cd;
-	struct ibv_context *dev = NULL;
-	struct rpma_conn_cfg *cfg = NULL;
-	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
-	struct rpma_conn_req *req = NULL;
-	enum rpma_conn_event event;
-	uint32_t cq_size;
-	struct rpma_conn_private_data pdata;
-	struct workspace *ws;
-	size_t server_mr_size;
-	int remote_flush_type;
-	struct rpma_peer_cfg *pcfg = NULL;
-	unsigned int sq_size;
-	int ret = 1;
-
-	/* configure logging thresholds to see more details */
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
-
 	/* not supported readwrite = trim / randtrim / trimwrite */
 	if (td_trim(td)) {
 		log_err("Not supported mode.\n");
 		return 1;
 	}
 
-	/* allocate client's data */
-	cd = calloc(1, sizeof(struct client_data));
-	if (cd == NULL) {
-		td_verror(td, errno, "calloc");
-		return 1;
-	}
+	return 0;
+}
 
-	/* allocate all in-memory queues */
-	cd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (cd->io_us_queued == NULL) {
-		td_verror(td, errno, "calloc");
-		goto err_free_cd;
-	}
-
-	cd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (cd->io_us_flight == NULL) {
-		td_verror(td, errno, "calloc");
-		goto err_free_io_us_queued;
-	}
-
-	cd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (cd->io_us_completed == NULL) {
-		td_verror(td, errno, "calloc");
-		goto err_free_io_us_flight;
-	}
-
-	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->hostname,
-				RPMA_UTIL_IBV_CONTEXT_REMOTE,
-				&dev);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
-		goto err_free_io_us_completed;
-	}
+static int client_conn_cfg_new(struct thread_data *td,
+		struct rpma_conn_cfg **cfg_ptr)
+{
+	unsigned int sq_size;
+	uint32_t cq_size;
+	int ret;
 
 	/* create a connection configuration object */
-	ret = rpma_conn_cfg_new(&cfg);
+	ret = rpma_conn_cfg_new(cfg_ptr);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_free_io_us_completed;
+		return ret;
 	}
 
 	/*
@@ -211,22 +166,159 @@ static int client_init(struct thread_data *td)
 	cq_size = sq_size;
 
 	/* apply queue sizes */
-	ret = rpma_conn_cfg_set_sq_size(cfg, sq_size);
+	ret = rpma_conn_cfg_set_sq_size(*cfg_ptr, sq_size);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
-		goto err_cfg_delete;
+		(void) rpma_conn_cfg_delete(cfg_ptr);
+		return ret;
 	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, cq_size);
+	ret = rpma_conn_cfg_set_cq_size(*cfg_ptr, cq_size);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
-		goto err_cfg_delete;
+		(void) rpma_conn_cfg_delete(cfg_ptr);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int client_conn_cfg_delete(struct thread_data *td,
+		struct rpma_conn_cfg **cfg_ptr)
+{
+	int ret = rpma_conn_cfg_delete(cfg_ptr);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		return ret;
+	}
+
+	return 0;
+}
+
+static int client_ws_validate(struct thread_data *td, char *ws_ptr)
+{
+	struct client_data *cd =  td->io_ops_data;
+	struct workspace *ws = ws_ptr;
+	size_t server_mr_size;
+	int remote_flush_type;
+	struct rpma_peer_cfg *pcfg = NULL;
+	int ret;
+
+	/* create the server's memory representation */
+	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
+			ws->mr_desc_size, &cd->server_mr)))
+		return ret;
+
+	/* get the total size of the shared server memory */
+	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
+		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
+		return ret;
+	}
+
+	/* get flush type of the remote node */
+	if ((ret = rpma_mr_remote_get_flush_type(cd->server_mr, &remote_flush_type))) {
+		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
+		return ret;
+	}
+
+	cd->flush_type = (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
+		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
+
+	if (cd->flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
+		/* configure peer's direct write to pmem support */
+		ret = rpma_peer_cfg_new(&pcfg);
+		if (ret) {
+			librpma_td_verror(td, ret, "rpma_peer_cfg_new");
+			return 1;
+		}
+
+		ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true);
+		if (ret) {
+			librpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
+			goto peer_cfg_delete;
+		}
+
+		ret = rpma_conn_apply_remote_peer_cfg(cd->conn, pcfg);
+		if (ret) {
+			librpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
+			goto peer_cfg_delete;
+		}
+
+		(void) rpma_peer_cfg_delete(&pcfg);
+	}
+
+	cd->ws_size = server_mr_size;
+
+	return 0;
+
+peer_cfg_delete:
+	(void) rpma_peer_cfg_delete(&pcfg);
+
+	return 1;
+}
+
+static int client_init(struct thread_data *td)
+{
+	struct client_options *o = td->eo;
+	struct client_data *cd;
+	struct ibv_context *dev = NULL;
+	struct rpma_conn_cfg *cfg = NULL;
+	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
+	struct rpma_conn_req *req = NULL;
+	enum rpma_conn_event event;
+	struct rpma_conn_private_data pdata;
+	int ret = 1;
+
+	if (client_not_supported(td))
+		return 1;
+
+	/* allocate client's data */
+	cd = calloc(1, sizeof(struct client_data));
+	if (cd == NULL) {
+		td_verror(td, errno, "calloc");
+		return 1;
+	}
+	td->io_ops_data = cd;
+
+	if ((ret = client_conn_cfg_new(td, &cfg)))
+		goto err_free_cd;
+
+	/* configure logging thresholds to see more details */
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
+
+	/* allocate all in-memory queues */
+	cd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
+	if (cd->io_us_queued == NULL) {
+		td_verror(td, errno, "calloc");
+		goto err_free_cd;
+	}
+
+	cd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
+	if (cd->io_us_flight == NULL) {
+		td_verror(td, errno, "calloc");
+		goto err_free_io_us_queued;
+	}
+
+	cd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
+	if (cd->io_us_completed == NULL) {
+		td_verror(td, errno, "calloc");
+		goto err_free_io_us_flight;
+	}
+
+	/* obtain an IBV context for a remote IP address */
+	ret = rpma_utils_get_ibv_context(o->hostname,
+				RPMA_UTIL_IBV_CONTEXT_REMOTE,
+				&dev);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		goto err_free_io_us_completed;
 	}
 
 	/* create a new peer object */
 	ret = rpma_peer_new(dev, &cd->peer);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_peer_new");
-		goto err_cfg_delete;
+		goto err_free_io_us_completed;
 	}
 
 	/* create a connection request */
@@ -235,12 +327,6 @@ static int client_init(struct thread_data *td)
 	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
-		goto err_peer_delete;
-	}
-
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		goto err_peer_delete;
 	}
 
@@ -266,58 +352,10 @@ static int client_init(struct thread_data *td)
 	if ((ret = rpma_conn_get_private_data(cd->conn, &pdata)))
 		goto err_conn_delete;
 
-	ws = pdata.ptr;
-
-	/* create the server's memory representation */
-	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
-			ws->mr_desc_size, &cd->server_mr)))
+	if ((ret = client_ws_validate(td, pdata.ptr)))
 		goto err_conn_delete;
 
-	/* get the total size of the shared server memory */
-	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
-		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
-		goto err_conn_delete;
-	}
-
-	/* get flush type of the remote node */
-	if ((ret = rpma_mr_remote_get_flush_type(cd->server_mr, &remote_flush_type))) {
-		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
-		goto err_conn_delete;
-	}
-
-	cd->flush_type = (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
-		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
-
-	if (cd->flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
-		/* configure peer's direct write to pmem support */
-		ret = rpma_peer_cfg_new(&pcfg);
-		if (ret) {
-			librpma_td_verror(td, ret, "rpma_peer_cfg_new");
-			goto err_conn_delete;
-		}
-
-		ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true);
-		if (ret) {
-			librpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
-			goto peer_cfg_delete;
-		}
-
-		ret = rpma_conn_apply_remote_peer_cfg(cd->conn, pcfg);
-		if (ret) {
-			librpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
-			goto peer_cfg_delete;
-		}
-
-		(void) rpma_peer_cfg_delete(&pcfg);
-	}
-
-	cd->ws_size = server_mr_size;
-	td->io_ops_data = cd;
-
-	return 0;
-
-peer_cfg_delete:
-	(void) rpma_peer_cfg_delete(&pcfg);
+	return client_conn_cfg_delete(td, &cfg);
 
 err_conn_delete:
 	(void) rpma_conn_disconnect(cd->conn);
@@ -329,9 +367,6 @@ err_req_delete:
 err_peer_delete:
 	(void) rpma_peer_delete(&cd->peer);
 
-err_cfg_delete:
-	(void) rpma_conn_cfg_delete(&cfg);
-
 err_free_io_us_completed:
 	free(cd->io_us_completed);
 
@@ -341,8 +376,12 @@ err_free_io_us_flight:
 err_free_io_us_queued:
 	free(cd->io_us_queued);
 
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(&cfg);
+
 err_free_cd:
 	free(cd);
+	td->io_ops_data = NULL;
 
 	return 1;
 }
