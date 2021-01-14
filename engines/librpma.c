@@ -73,34 +73,13 @@ static struct fio_option fio_client_options[] = {
 };
 
 struct client_data {
-	struct rpma_peer *peer;
-	struct rpma_conn *conn;
 	enum rpma_flush_type flush_type;
-
-	/* aligned td->orig_buffer */
-	char *orig_buffer_aligned;
-
-	/* ious's base address memory registration (cd->orig_buffer_aligned) */
-	struct rpma_mr_local *orig_mr;
-
-	/* a server's memory representation */
-	struct rpma_mr_remote *server_mr;
-
-	/* remote workspace description */
-	size_t ws_size;
-
-	/* in-memory queues */
-	struct io_u **io_us_queued;
-	int io_u_queued_nr;
-	struct io_u **io_us_flight;
-	int io_u_flight_nr;
-	struct io_u **io_us_completed;
-	int io_u_completed_nr;
 };
 
 static int client_init(struct thread_data *td)
 {
 	struct client_options *o = td->eo;
+	struct librpma_common_client_data *ccd;
 	struct client_data *cd;
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_cfg *cfg = NULL;
@@ -127,27 +106,33 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* allocate client's data */
+	ccd = calloc(1, sizeof(struct librpma_common_client_data));
+	if (ccd == NULL) {
+		td_verror(td, errno, "calloc");
+		return 1;
+	}
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
+		free(ccd);
 		return 1;
 	}
 
 	/* allocate all in-memory queues */
-	cd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (cd->io_us_queued == NULL) {
+	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
+	if (ccd->io_us_queued == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_cd;
 	}
 
-	cd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (cd->io_us_flight == NULL) {
+	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
+	if (ccd->io_us_flight == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_io_us_queued;
 	}
 
-	cd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (cd->io_us_completed == NULL) {
+	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
+	if (ccd->io_us_completed == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_io_us_flight;
 	}
@@ -223,7 +208,7 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* create a new peer object */
-	ret = rpma_peer_new(dev, &cd->peer);
+	ret = rpma_peer_new(dev, &ccd->peer);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_peer_new");
 		goto err_cfg_delete;
@@ -232,7 +217,7 @@ static int client_init(struct thread_data *td)
 	/* create a connection request */
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		goto err_peer_delete;
-	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
+	ret = rpma_conn_req_new(ccd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
@@ -245,14 +230,14 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* connect the connection request and obtain the connection object */
-	ret = rpma_conn_req_connect(&req, NULL, &cd->conn);
+	ret = rpma_conn_req_connect(&req, NULL, &ccd->conn);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_req_connect");
 		goto err_req_delete;
 	}
 
 	/* wait for the connection to establish */
-	ret = rpma_conn_next_event(cd->conn, &event);
+	ret = rpma_conn_next_event(ccd->conn, &event);
 	if (ret) {
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
@@ -263,24 +248,24 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* get the connection's private data sent from the server */
-	if ((ret = rpma_conn_get_private_data(cd->conn, &pdata)))
+	if ((ret = rpma_conn_get_private_data(ccd->conn, &pdata)))
 		goto err_conn_delete;
 
 	ws = pdata.ptr;
 
 	/* create the server's memory representation */
 	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
-			ws->mr_desc_size, &cd->server_mr)))
+			ws->mr_desc_size, &ccd->server_mr)))
 		goto err_conn_delete;
 
 	/* get the total size of the shared server memory */
-	if ((ret = rpma_mr_remote_get_size(cd->server_mr, &server_mr_size))) {
+	if ((ret = rpma_mr_remote_get_size(ccd->server_mr, &server_mr_size))) {
 		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
 		goto err_conn_delete;
 	}
 
 	/* get flush type of the remote node */
-	if ((ret = rpma_mr_remote_get_flush_type(cd->server_mr, &remote_flush_type))) {
+	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr, &remote_flush_type))) {
 		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
 		goto err_conn_delete;
 	}
@@ -302,7 +287,7 @@ static int client_init(struct thread_data *td)
 			goto peer_cfg_delete;
 		}
 
-		ret = rpma_conn_apply_remote_peer_cfg(cd->conn, pcfg);
+		ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg);
 		if (ret) {
 			librpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
 			goto peer_cfg_delete;
@@ -311,8 +296,9 @@ static int client_init(struct thread_data *td)
 		(void) rpma_peer_cfg_delete(&pcfg);
 	}
 
-	cd->ws_size = server_mr_size;
-	td->io_ops_data = cd;
+	ccd->ws_size = server_mr_size;
+	ccd->client_data = cd;
+	td->io_ops_data = ccd;
 
 	return 0;
 
@@ -320,36 +306,37 @@ peer_cfg_delete:
 	(void) rpma_peer_cfg_delete(&pcfg);
 
 err_conn_delete:
-	(void) rpma_conn_disconnect(cd->conn);
-	(void) rpma_conn_delete(&cd->conn);
+	(void) rpma_conn_disconnect(ccd->conn);
+	(void) rpma_conn_delete(&ccd->conn);
 
 err_req_delete:
 	if (req)
 		(void) rpma_conn_req_delete(&req);
 err_peer_delete:
-	(void) rpma_peer_delete(&cd->peer);
+	(void) rpma_peer_delete(&ccd->peer);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
 err_free_io_us_completed:
-	free(cd->io_us_completed);
+	free(ccd->io_us_completed);
 
 err_free_io_us_flight:
-	free(cd->io_us_flight);
+	free(ccd->io_us_flight);
 
 err_free_io_us_queued:
-	free(cd->io_us_queued);
+	free(ccd->io_us_queued);
 
 err_free_cd:
 	free(cd);
+	free(ccd);
 
 	return 1;
 }
 
 static int client_post_init(struct thread_data *td)
 {
-	struct client_data *cd =  td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	size_t io_us_size;
 	int ret;
 
@@ -357,7 +344,7 @@ static int client_post_init(struct thread_data *td)
 	 * td->orig_buffer is not aligned. The engine requires aligned io_us
 	 * so FIO alignes up the address using the formula below.
 	 */
-	cd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
+	ccd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
 			td->o.mem_align;
 
 	/*
@@ -367,38 +354,38 @@ static int client_post_init(struct thread_data *td)
 	io_us_size = (unsigned long long)td_max_bs(td) *
 			(unsigned long long)td->o.iodepth;
 
-	if ((ret = rpma_mr_reg(cd->peer, cd->orig_buffer_aligned, io_us_size,
+	if ((ret = rpma_mr_reg(ccd->peer, ccd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
 			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT,
-			&cd->orig_mr)))
+			&ccd->orig_mr)))
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 	return ret;
 }
 
 static void client_cleanup(struct thread_data *td)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	enum rpma_conn_event ev;
 	int ret;
 
-	if (cd == NULL)
+	if (ccd == NULL)
 		return;
 
 	/* delete the iou's memory registration */
-	if ((ret = rpma_mr_dereg(&cd->orig_mr)))
+	if ((ret = rpma_mr_dereg(&ccd->orig_mr)))
 		librpma_td_verror(td, ret, "rpma_mr_dereg");
 
 	/* delete the iou's memory registration */
-	if ((ret = rpma_mr_remote_delete(&cd->server_mr)))
+	if ((ret = rpma_mr_remote_delete(&ccd->server_mr)))
 		librpma_td_verror(td, ret, "rpma_mr_remote_delete");
 
 	/* initiate disconnection */
-	if ((ret = rpma_conn_disconnect(cd->conn)))
+	if ((ret = rpma_conn_disconnect(ccd->conn)))
 		librpma_td_verror(td, ret, "rpma_conn_disconnect");
 
 	/* wait for disconnection to end up */
-	if ((ret = rpma_conn_next_event(cd->conn, &ev))) {
+	if ((ret = rpma_conn_next_event(ccd->conn, &ev))) {
 		librpma_td_verror(td, ret, "rpma_conn_next_event");
 	} else if (ev != RPMA_CONN_CLOSED) {
 		log_err(
@@ -407,27 +394,28 @@ static void client_cleanup(struct thread_data *td)
 	}
 
 	/* delete the connection */
-	if ((ret = rpma_conn_delete(&cd->conn)))
+	if ((ret = rpma_conn_delete(&ccd->conn)))
 		librpma_td_verror(td, ret, "rpma_conn_delete");
 
 	/* delete the peer */
-	if ((ret = rpma_peer_delete(&cd->peer)))
+	if ((ret = rpma_peer_delete(&ccd->peer)))
 		librpma_td_verror(td, ret, "rpma_peer_delete");
 
 	/* free the software queues */
-	free(cd->io_us_queued);
-	free(cd->io_us_flight);
-	free(cd->io_us_completed);
+	free(ccd->io_us_queued);
+	free(ccd->io_us_flight);
+	free(ccd->io_us_completed);
 
 	/* free the client's data */
-	free(td->io_ops_data);
+	free(ccd->client_data);
+	free(ccd);
 }
 
 static int client_get_file_size(struct thread_data *td, struct fio_file *f)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 
-	f->real_file_size = cd->ws_size;
+	f->real_file_size = ccd->ws_size;
 	fio_file_set_size_known(f);
 
 	return 0;
@@ -447,12 +435,12 @@ static int client_close_file(struct thread_data *td, struct fio_file *f)
 
 static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int flags)
 {
-	struct client_data *cd = td->io_ops_data;
-	size_t dst_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	size_t dst_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
 	size_t src_offset = io_u->offset;
-	int ret = rpma_read(cd->conn,
-			cd->orig_mr, dst_offset,
-			cd->server_mr, src_offset,
+	int ret = rpma_read(ccd->conn,
+			ccd->orig_mr, dst_offset,
+			ccd->server_mr, src_offset,
 			io_u->xfer_buflen,
 			flags,
 			(void *)(uintptr_t)io_u->index);
@@ -466,13 +454,13 @@ static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int 
 
 static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int flags)
 {
-	struct client_data *cd = td->io_ops_data;
-	size_t src_offset = (char *)(io_u->xfer_buf) - cd->orig_buffer_aligned;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	size_t src_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
 	size_t dst_offset = io_u->offset;
 
-	int ret = rpma_write(cd->conn,
-			cd->server_mr, dst_offset,
-			cd->orig_mr, src_offset,
+	int ret = rpma_write(ccd->conn,
+			ccd->server_mr, dst_offset,
+			ccd->orig_mr, src_offset,
 			io_u->xfer_buflen,
 			flags,
 			(void *)(uintptr_t)io_u->index);
@@ -488,10 +476,11 @@ static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct client_data *cd = ccd->client_data;
 	size_t dst_offset = first_io_u->offset;
 
-	int ret = rpma_flush(cd->conn, cd->server_mr, dst_offset, len,
+	int ret = rpma_flush(ccd->conn, ccd->server_mr, dst_offset, len,
 		cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
 		(void *)(uintptr_t)last_io_u->index);
 	if (ret) {
@@ -505,7 +494,7 @@ static inline int client_io_flush(struct thread_data *td,
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
 	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
@@ -529,7 +518,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 
 	do {
 		/* get a completion */
-		ret = rpma_conn_completion_get(cd->conn, &cmpl);
+		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
 		if (ret == 0) {
 			/* if io_u has completed with an error */
 			if (cmpl.op_status != IBV_WC_SUCCESS)
@@ -559,24 +548,24 @@ err:
 static enum fio_q_status client_queue(struct thread_data *td,
 					  struct io_u *io_u)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 
-	if (cd->io_u_queued_nr == (int)td->o.iodepth)
+	if (ccd->io_u_queued_nr == (int)td->o.iodepth)
 		return FIO_Q_BUSY;
 
 	if (td->o.sync_io)
 		return client_queue_sync(td, io_u);
 
 	/* io_u -> queued[] */
-	cd->io_us_queued[cd->io_u_queued_nr] = io_u;
-	cd->io_u_queued_nr++;
+	ccd->io_us_queued[ccd->io_u_queued_nr] = io_u;
+	ccd->io_u_queued_nr++;
 
 	return FIO_Q_QUEUED;
 }
 
 static int client_commit(struct thread_data *td)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	int flags = RPMA_F_COMPLETION_ON_ERROR;
 	struct timespec now;
 	bool fill_time;
@@ -585,15 +574,15 @@ static int client_commit(struct thread_data *td)
 	struct io_u *flush_first_io_u = NULL;
 	unsigned long long int flush_len = 0;
 
-	if (!cd->io_us_queued)
+	if (!ccd->io_us_queued)
 		return -1;
 
 	/* execute all io_us from queued[] */
-	for (i = 0; i < cd->io_u_queued_nr; i++) {
-		struct io_u *io_u = cd->io_us_queued[i];
+	for (i = 0; i < ccd->io_u_queued_nr; i++) {
+		struct io_u *io_u = ccd->io_us_queued[i];
 
 		if (io_u->ddir == DDIR_READ) {
-			if (i + 1 == cd->io_u_queued_nr || cd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
+			if (i + 1 == ccd->io_u_queued_nr || ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
 				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
 			if ((ret = client_io_read(td, io_u, flags)))
@@ -626,8 +615,8 @@ static int client_commit(struct thread_data *td)
 				 * cover all of them which build a continuous
 				 * sequence
 				 */
-				if (i + 1 < cd->io_u_queued_nr &&
-						cd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
+				if (i + 1 < ccd->io_u_queued_nr &&
+						ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
 					continue;
 			}
 
@@ -652,16 +641,16 @@ static int client_commit(struct thread_data *td)
 		fio_gettime(&now, NULL);
 
 	/* move executed io_us from queued[] to flight[] */
-	for (i = 0; i < cd->io_u_queued_nr; i++) {
-		struct io_u *io_u = cd->io_us_queued[i];
+	for (i = 0; i < ccd->io_u_queued_nr; i++) {
+		struct io_u *io_u = ccd->io_us_queued[i];
 
 		/* FIO does not do this if the engine is asynchronous */
 		if (fill_time)
 			memcpy(&io_u->issue_time, &now, sizeof(now));
 
 		/* move executed io_us from queued[] to flight[] */
-		cd->io_us_flight[cd->io_u_flight_nr] = io_u;
-		cd->io_u_flight_nr++;
+		ccd->io_us_flight[ccd->io_u_flight_nr] = io_u;
+		ccd->io_u_flight_nr++;
 
 		/*
 		 * FIO says:
@@ -671,8 +660,8 @@ static int client_commit(struct thread_data *td)
 	}
 
 	/* FIO does not do this if an engine has the commit hook. */
-	io_u_mark_submit(td, cd->io_u_queued_nr);
-	cd->io_u_queued_nr = 0;
+	io_u_mark_submit(td, ccd->io_u_queued_nr);
+	ccd->io_u_queued_nr = 0;
 
 	return 0;
 }
@@ -685,7 +674,7 @@ static int client_commit(struct thread_data *td)
  */
 static int client_getevent_process(struct thread_data *td)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
 	unsigned int io_us_error = 0;
 	/* io_u->index of completed io_u (cmpl.op_context) */
@@ -698,7 +687,7 @@ static int client_getevent_process(struct thread_data *td)
 	int ret;
 
 	/* get a completion */
-	if ((ret = rpma_conn_completion_get(cd->conn, &cmpl))) {
+	if ((ret = rpma_conn_completion_get(ccd->conn, &cmpl))) {
 		/* lack of completion is not an error */
 		if (ret == RPMA_E_NO_COMPLETION)
 			return 0;
@@ -714,8 +703,8 @@ static int client_getevent_process(struct thread_data *td)
 
 	/* look for an io_u being completed */
 	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
-	for (i = 0; i < cd->io_u_flight_nr; ++i) {
-		if (cd->io_us_flight[i]->index == io_u_index) {
+	for (i = 0; i < ccd->io_u_flight_nr; ++i) {
+		if (ccd->io_us_flight[i]->index == io_u_index) {
 			cmpl_num = i + 1;
 			break;
 		}
@@ -732,18 +721,18 @@ static int client_getevent_process(struct thread_data *td)
 	/* move completed io_us to the completed in-memory queue */
 	for (i = 0; i < cmpl_num; ++i) {
 		/* get and prepare io_u */
-		io_u = cd->io_us_flight[i];
+		io_u = ccd->io_us_flight[i];
 		io_u->error = io_us_error;
 
 		/* append to the queue */
-		cd->io_us_completed[cd->io_u_completed_nr] = io_u;
-		cd->io_u_completed_nr++;
+		ccd->io_us_completed[ccd->io_u_completed_nr] = io_u;
+		ccd->io_u_completed_nr++;
 	}
 
 	/* remove completed io_us from the flight queue */
-	for (i = cmpl_num; i < cd->io_u_flight_nr; ++i)
-		cd->io_us_flight[i - cmpl_num] = cd->io_us_flight[i];
-	cd->io_u_flight_nr -= cmpl_num;
+	for (i = cmpl_num; i < ccd->io_u_flight_nr; ++i)
+		ccd->io_us_flight[i - cmpl_num] = ccd->io_us_flight[i];
+	ccd->io_u_flight_nr -= cmpl_num;
 
 	return cmpl_num;
 }
@@ -782,17 +771,17 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 
 static struct io_u *client_event(struct thread_data *td, int event)
 {
-	struct client_data *cd = td->io_ops_data;
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct io_u *io_u;
 	int i;
 
 	/* get the first io_u from the queue */
-	io_u = cd->io_us_completed[0];
+	io_u = ccd->io_us_completed[0];
 
 	/* remove the first io_u from the queue */
-	for (i = 1; i < cd->io_u_completed_nr; ++i)
-		cd->io_us_completed[i - 1] = cd->io_us_completed[i];
-	cd->io_u_completed_nr--;
+	for (i = 1; i < ccd->io_u_completed_nr; ++i)
+		ccd->io_us_completed[i - 1] = ccd->io_us_completed[i];
+	ccd->io_u_completed_nr--;
 
 	dprint_io_u(io_u, "client_event");
 
