@@ -23,4 +23,17 @@
 int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
 	char *port_out);
 
+struct librpma_common_mem {
+	/* memory buffer */
+	char *mem_ptr;
+
+	/* size of the mapped persistent memory */
+	size_t size_mmap;
+};
+
+char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
+	size_t size, struct librpma_common_mem *mem);
+
+void librpma_common_free(struct librpma_common_mem *mem);
+
 #endif /* LIBRPMA_COMMON_H */
