@@ -18,6 +18,8 @@
 #include "../hash.h"
 #include "../optgroup.h"
 
+#include "librpma_common.h"
+
 #include <libpmem.h>
 #include <librpma.h>
 
@@ -142,40 +144,13 @@ struct client_data {
 	int io_u_completed_nr;
 };
 
-#define PORT_STR_LEN_MAX 12
-
-static int common_td_port(const char *port_base_str,
-		struct thread_data *td, char *port_out)
-{
-	unsigned long int port_ul = strtoul(port_base_str, NULL, 10);
-	unsigned int port_new;
-
-	port_out[0] = '\0';
-
-	if (port_ul == ULONG_MAX) {
-		td_verror(td, errno, "strtoul");
-		return -1;
-	}
-	port_ul += td->thread_number - 1;
-	if (port_ul >= UINT_MAX) {
-		log_err("[%u] port number (%lu) bigger than UINT_MAX\n",
-			td->thread_number, port_ul);
-		return -1;
-	}
-
-	port_new = port_ul;
-	snprintf(port_out, PORT_STR_LEN_MAX - 1, "%u", port_new);
-
-	return 0;
-}
-
 static int client_init(struct thread_data *td)
 {
 	struct client_options *o = td->eo;
 	struct client_data *cd;
 	struct ibv_context *dev = NULL;
 	struct rpma_conn_cfg *cfg = NULL;
-	char port_td[PORT_STR_LEN_MAX];
+	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	uint32_t write_num;
@@ -292,7 +267,7 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* create a connection request */
-	if ((ret = common_td_port(o->port, td, port_td)))
+	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		goto err_peer_delete;
 	ret = rpma_conn_req_new(cd->peer, o->hostname, port_td, cfg, &req);
 	if (ret) {
@@ -1188,7 +1163,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
-	char port_td[PORT_STR_LEN_MAX];
+	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
 	struct rpma_ep *ep;
 	size_t mr_desc_size;
 	size_t mmap_size = 0;
@@ -1263,7 +1238,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	pdata.len = sizeof(struct workspace);
 
 	/* start a listening endpoint at addr:port */
-	if ((ret = common_td_port(o->port, td, port_td)))
+	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		goto err_mr_dereg;
 	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
 	if (ret) {
