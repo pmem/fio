@@ -1149,6 +1149,16 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 	ws.max_msg_num = td->o.iodepth;
 
+	/* start a listening endpoint at addr:port */
+	if ((ret = librpma_common_td_port(o->port, td, port_td)))
+		return 1;
+
+	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_ep_listen");
+		return 1;
+	}
+
 	/* allocation from PMEM using pmem_map_file() */
 	ws_ptr = librpma_common_allocate_pmem(td, f->file_name, mem_size,
 			&sd->mem);
@@ -1180,20 +1190,11 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
-	/* start a listening endpoint at addr:port */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		goto err_mr_dereg;
-	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_ep_listen");
-		goto err_mr_dereg;
-	}
-
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_ep_shutdown;
+		goto err_mr_dereg;
 	}
 
 	/*
@@ -1272,14 +1273,14 @@ err_req_delete:
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
-err_ep_shutdown:
-	(void) rpma_ep_shutdown(&ep);
-
 err_mr_dereg:
 	(void) rpma_mr_dereg(&mmap_mr);
 
 err_pmem_unmap:
 	librpma_common_free(&sd->mem);
+
+err_ep_shutdown:
+	(void) rpma_ep_shutdown(&ep);
 
 	return 1;
 }
