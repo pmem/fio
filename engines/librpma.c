@@ -1048,6 +1048,16 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		return 1;
 	}
 
+	/* start a listening endpoint at addr:port */
+	if ((ret = librpma_common_td_port(o->port, td, port_td)))
+		return 1;
+
+	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_listen");
+		return 1;
+	}
+
 	if (strcmp(f->file_name, "malloc") == 0) {
 		/* allocation from DRAM using posix_memalign() */
 		mem_ptr = server_allocate_dram(td, mem_size);
@@ -1057,7 +1067,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 
 	if (mem_ptr == NULL)
-		return 1;
+		goto err_ep_shutdown;
 
 	f->real_file_size = mem_size;
 
@@ -1097,19 +1107,9 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
-	/* start a listening endpoint at addr:port */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		goto err_mr_dereg;
-
-	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_ep_listen");
-		goto err_mr_dereg;
-	}
-
 	/* receive an incoming connection request */
 	if ((ret = rpma_ep_next_conn_req(ep, NULL, &conn_req)))
-		goto err_ep_shutdown;
+		goto err_mr_dereg;
 
 	/* accept the connection request and obtain the connection object */
 	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
@@ -1141,14 +1141,14 @@ err_conn_delete:
 err_req_delete:
 	(void) rpma_conn_req_delete(&conn_req);
 
-err_ep_shutdown:
-	(void) rpma_ep_shutdown(&ep);
-
 err_mr_dereg:
 	(void) rpma_mr_dereg(&mr);
 
 err_free:
 	server_free(td);
+
+err_ep_shutdown:
+	(void) rpma_ep_shutdown(&ep);
 
 	return (ret != 0 ? ret : 1);
 }

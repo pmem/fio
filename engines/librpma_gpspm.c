@@ -1184,6 +1184,16 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	}
 	ws.max_msg_num = td->o.iodepth;
 
+	/* start a listening endpoint at addr:port */
+	if ((ret = librpma_common_td_port(o->port, td, port_td)))
+		return 1;
+
+	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
+	if (ret) {
+		rpma_td_verror(td, ret, "rpma_ep_listen");
+		return 1;
+	}
+
 	/* map the file */
 	mmap_ptr = pmem_map_file(f->file_name, 0 /* len */, 0 /* flags */,
 			0 /* mode */, &mmap_size, &mmap_is_pmem);
@@ -1191,7 +1201,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		log_err("fio: pmem_map_file(%s) failed\n", f->file_name);
 		/* pmem_map_file() sets errno on failure */
 		td_verror(td, errno, "pmem_map_file");
-		return 1;
+		goto err_ep_shutdown;
 	}
 	/*
 	 * XXX the server-side does not execute any FIO-provided IO against
@@ -1237,20 +1247,11 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	pdata.ptr = &ws;
 	pdata.len = sizeof(struct workspace);
 
-	/* start a listening endpoint at addr:port */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		goto err_mr_dereg;
-	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
-	if (ret) {
-		rpma_td_verror(td, ret, "rpma_ep_listen");
-		goto err_mr_dereg;
-	}
-
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
 	if (ret) {
 		rpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_ep_shutdown;
+		goto err_mr_dereg;
 	}
 
 	/*
@@ -1330,14 +1331,14 @@ err_req_delete:
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
-err_ep_shutdown:
-	(void) rpma_ep_shutdown(&ep);
-
 err_mr_dereg:
 	(void) rpma_mr_dereg(&mmap_mr);
 
 err_pmem_unmap:
 	(void) pmem_unmap(mmap_ptr, mmap_size);
+
+err_ep_shutdown:
+	(void) rpma_ep_shutdown(&ep);
 
 	return 1;
 }
