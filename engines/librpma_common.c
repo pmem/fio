@@ -103,3 +103,14 @@ void librpma_common_free(struct librpma_common_mem *mem)
 	else
 		free(mem->mem_ptr);
 }
+
+int librpma_common_client_get_file_size(struct thread_data *td,
+		struct fio_file *f)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+
+	f->real_file_size = ccd->ws_size;
+	fio_file_set_size_known(f);
+
+	return 0;
+}
