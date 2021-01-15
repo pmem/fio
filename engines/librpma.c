@@ -36,22 +36,12 @@ struct workspace {
 
 /* client side implementation */
 
-struct client_options {
-	/*
-	 * FIO considers .off1 == 0 absent so the first meaningful field has to
-	 * have padding ahead of it.
-	 */
-	void *pad;
-	char *hostname;
-	char *port;
-};
-
 static struct fio_option fio_client_options[] = {
 	{
 		.name	= "hostname",
 		.lname	= "rpma_client hostname",
 		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct client_options, hostname),
+		.off1	= offsetof(struct librpma_common_client_options, hostname),
 		.help	= "IP address the server is listening on",
 		.def    = "",
 		.category = FIO_OPT_C_ENGINE,
@@ -61,7 +51,7 @@ static struct fio_option fio_client_options[] = {
 		.name	= "port",
 		.lname	= "rpma_client port",
 		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct client_options, port),
+		.off1	= offsetof(struct librpma_common_client_options, port),
 		.help	= "port the server is listening on",
 		.def    = "7204",
 		.category = FIO_OPT_C_ENGINE,
@@ -78,7 +68,7 @@ struct client_data {
 
 static int client_init(struct thread_data *td)
 {
-	struct client_options *o = td->eo;
+	struct librpma_common_client_options *o = td->eo;
 	struct librpma_common_client_data *ccd;
 	struct client_data *cd;
 	struct ibv_context *dev = NULL;
@@ -819,7 +809,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
 	.options		= fio_client_options,
-	.option_struct_size	= sizeof(struct client_options),
+	.option_struct_size	= sizeof(struct librpma_common_client_options),
 };
 
 /* server side implementation */
