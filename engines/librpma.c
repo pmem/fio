@@ -22,18 +22,6 @@
 #include <libpmem.h>
 #include <librpma.h>
 
-/*
- * Limited by the maximum length of the private data
- * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
- */
-#define DESCRIPTORS_MAX_SIZE 27
-
-struct workspace {
-	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
-	/* buffer containing mr_desc */
-	char descriptors[DESCRIPTORS_MAX_SIZE];
-};
-
 /* client side implementation */
 
 static struct fio_option fio_client_options[] = {
@@ -78,7 +66,7 @@ static int client_init(struct thread_data *td)
 	enum rpma_conn_event event;
 	uint32_t cq_size;
 	struct rpma_conn_private_data pdata;
-	struct workspace *ws;
+	struct librpma_common_workspace *ws;
 	size_t server_mr_size;
 	int remote_flush_type;
 	struct rpma_peer_cfg *pcfg = NULL;
@@ -944,7 +932,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	size_t mr_desc_size;
 	size_t mem_size = td->o.size;
 	struct rpma_conn_private_data pdata;
-	struct workspace ws;
+	struct librpma_common_workspace ws;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
 	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
@@ -1014,7 +1002,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	/* prepare a workspace description */
 	ws.mr_desc_size = mr_desc_size;
 	pdata.ptr = &ws;
-	pdata.len = sizeof(struct workspace);
+	pdata.len = sizeof(struct librpma_common_workspace);
 
 	/* receive an incoming connection request */
 	if ((ret = rpma_ep_next_conn_req(ep, NULL, &conn_req)))

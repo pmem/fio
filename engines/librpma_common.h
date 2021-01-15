@@ -24,6 +24,19 @@
 /* ceil(a / b) = (a + b - 1) / b */
 #define LIBRPMA_CEIL(a, b) (((a) + (b) - 1) / (b))
 
+/*
+ * Limited by the maximum length of the private data
+ * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
+ */
+#define DESCRIPTORS_MAX_SIZE 25
+
+struct librpma_common_workspace {
+	uint16_t max_msg_num;	/* # of RQ slots */
+	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
+	/* buffer containing mr_desc */
+	char descriptors[DESCRIPTORS_MAX_SIZE];
+};
+
 struct librpma_common_client_options {
 	/*
 	 * FIO considers .off1 == 0 absent so the first meaningful field has to
