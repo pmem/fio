@@ -67,6 +67,10 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 
 void librpma_common_free(struct librpma_common_mem *mem);
 
+typedef int (*flush_func_t)(struct thread_data *td,
+		struct io_u *first_io_u, struct io_u *last_io_u,
+		unsigned long long int len);
+
 struct librpma_common_client_data {
 	struct rpma_peer *peer;
 	struct rpma_conn *conn;
@@ -93,6 +97,8 @@ struct librpma_common_client_data {
 	struct io_u **io_us_completed;
 	int io_u_completed_nr;
 
+	flush_func_t flush;
+
 	/* engine-specific client data */
 	void *client_data;
 };
@@ -101,5 +107,49 @@ int librpma_common_client_init(struct thread_data *td,
 	struct librpma_common_client_data *ccd, struct rpma_conn_cfg *cfg);
 
 int librpma_common_file_nop(struct thread_data *td, struct fio_file *f);
+
+enum fio_q_status librpma_common_client_queue(struct thread_data *td,
+		struct io_u *io_u);
+
+static inline int librpma_common_client_io_read(struct thread_data *td,
+		struct io_u *io_u, int flags)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	size_t dst_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
+	size_t src_offset = io_u->offset;
+	int ret = rpma_read(ccd->conn,
+			ccd->orig_mr, dst_offset,
+			ccd->server_mr, src_offset,
+			io_u->xfer_buflen,
+			flags,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_read");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int librpma_common_client_io_write(struct thread_data *td,
+		struct io_u *io_u)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	size_t src_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
+	size_t dst_offset = io_u->offset;
+
+	int ret = rpma_write(ccd->conn,
+			ccd->server_mr, dst_offset,
+			ccd->orig_mr, src_offset,
+			io_u->xfer_buflen,
+			RPMA_F_COMPLETION_ON_ERROR,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_write");
+		return -1;
+	}
+
+	return 0;
+}
 
 #endif /* LIBRPMA_COMMON_H */

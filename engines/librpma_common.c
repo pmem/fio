@@ -234,3 +234,76 @@ int librpma_common_file_nop(struct thread_data *td, struct fio_file *f)
 	/* NOP */
 	return 0;
 }
+
+static enum fio_q_status client_queue_sync(struct thread_data *td,
+					  struct io_u *io_u)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	/* io_u->index of completed io_u (cmpl.op_context) */
+	unsigned int io_u_index;
+	int ret;
+
+	/* execute io_u */
+	if (io_u->ddir == DDIR_READ) {
+		/* post an RDMA read operation */
+		if ((ret = librpma_common_client_io_read(td, io_u,
+				RPMA_F_COMPLETION_ALWAYS)))
+			goto err;
+	} else if (io_u->ddir == DDIR_WRITE) {
+		/* post an RDMA write operation */
+		if ((ret = librpma_common_client_io_write(td, io_u)))
+			goto err;
+		if ((ret = ccd->flush(td, io_u, io_u, io_u->xfer_buflen)))
+			goto err;
+	} else {
+		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
+		goto err;
+	}
+
+	do {
+		/* get a completion */
+		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
+		if (ret == 0) {
+			/* if io_u has completed with an error */
+			if (cmpl.op_status != IBV_WC_SUCCESS)
+				goto err;
+		} else if (ret != RPMA_E_NO_COMPLETION) {
+			/* an error occurred */
+			librpma_td_verror(td, ret, "rpma_conn_completion_get");
+			goto err;
+		}
+	} while (ret == RPMA_E_NO_COMPLETION);
+
+	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
+	if (io_u->index != io_u_index) {
+		log_err(
+			"no matching io_u for received completion found (io_u_index=%u)\n",
+			io_u_index);
+		goto err;
+	}
+
+	return FIO_Q_COMPLETED;
+
+err:
+	io_u->error = -1;
+	return FIO_Q_COMPLETED;
+}
+
+enum fio_q_status librpma_common_client_queue(struct thread_data *td,
+		struct io_u *io_u)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+
+	if (ccd->io_u_queued_nr == (int)td->o.iodepth)
+		return FIO_Q_BUSY;
+
+	if (td->o.sync_io)
+		return client_queue_sync(td, io_u);
+
+	/* io_u -> queued[] */
+	ccd->io_us_queued[ccd->io_u_queued_nr] = io_u;
+	ccd->io_u_queued_nr++;
+
+	return FIO_Q_QUEUED;
+}
