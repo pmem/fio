@@ -228,3 +228,9 @@ err_free_io_u_queues:
 
 	return 1;
 }
+
+int librpma_common_file_nop(struct thread_data *td, struct fio_file *f)
+{
+	/* NOP */
+	return 0;
+}
