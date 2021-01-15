@@ -45,19 +45,6 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
 	(flush_req->length != Flush_req_last.length || \
 	flush_req->offset != Flush_req_last.offset)
 
-/*
- * Limited by the maximum length of the private data
- * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
- */
-#define DESCRIPTORS_MAX_SIZE 25
-
-struct workspace {
-	uint16_t max_msg_num;	/* # of RQ slots */
-	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
-	/* buffer containing mr_desc */
-	char descriptors[DESCRIPTORS_MAX_SIZE];
-};
-
 /* client side implementation */
 
 /* get next io_u message buffer in the round-robin fashion */
@@ -113,7 +100,7 @@ static int client_init(struct thread_data *td)
 	enum rpma_conn_event event;
 	uint32_t write_num;
 	struct rpma_conn_private_data pdata;
-	struct workspace *ws;
+	struct librpma_common_workspace *ws;
 	size_t server_mr_size;
 	int ret = 1;
 
@@ -1108,7 +1095,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	size_t mem_size = td->o.size;
 	struct rpma_conn_private_data pdata;
 	struct rpma_mr_local *mmap_mr;
-	struct workspace ws;
+	struct librpma_common_workspace ws;
 	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
@@ -1170,7 +1157,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	/* calculate data for the server read */
 	ws.mr_desc_size = mr_desc_size;
 	pdata.ptr = &ws;
-	pdata.len = sizeof(struct workspace);
+	pdata.len = sizeof(struct librpma_common_workspace);
 
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
