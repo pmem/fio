@@ -72,6 +72,13 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 
 void librpma_common_free(struct librpma_common_mem *mem);
 
+typedef int (*flush_t)(struct thread_data *td,
+		struct io_u *first_io_u, struct io_u *last_io_u,
+		unsigned long long int len);
+
+typedef int (*get_io_u_index_t)(struct rpma_completion *cmpl,
+		unsigned int *io_u_index);
+
 struct librpma_common_client_data {
 	struct rpma_peer *peer;
 	struct rpma_conn *conn;
@@ -101,6 +108,9 @@ struct librpma_common_client_data {
 	/* completion counter */
 	uint32_t op_send_completed;
 
+	flush_t flush;
+	get_io_u_index_t get_io_u_index;
+
 	/* engine-specific client data */
 	void *client_data;
 };
@@ -114,6 +124,50 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 		struct fio_file *f);
 
 int librpma_common_client_post_init(struct thread_data *td);
+
+enum fio_q_status librpma_common_client_queue(struct thread_data *td,
+		struct io_u *io_u);
+
+static inline int librpma_common_client_io_read(struct thread_data *td,
+		struct io_u *io_u, int flags)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	size_t dst_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
+	size_t src_offset = io_u->offset;
+	int ret = rpma_read(ccd->conn,
+			ccd->orig_mr, dst_offset,
+			ccd->server_mr, src_offset,
+			io_u->xfer_buflen,
+			flags,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_read");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int librpma_common_client_io_write(struct thread_data *td,
+		struct io_u *io_u)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	size_t src_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
+	size_t dst_offset = io_u->offset;
+
+	int ret = rpma_write(ccd->conn,
+			ccd->server_mr, dst_offset,
+			ccd->orig_mr, src_offset,
+			io_u->xfer_buflen,
+			RPMA_F_COMPLETION_ON_ERROR,
+			(void *)(uintptr_t)io_u->index);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_write");
+		return -1;
+	}
+
+	return 0;
+}
 
 /* servers' common */
 
