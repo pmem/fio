@@ -45,19 +45,6 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
 	(flush_req->length != Flush_req_last.length || \
 	flush_req->offset != Flush_req_last.offset)
 
-/*
- * Limited by the maximum length of the private data
- * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
- */
-#define DESCRIPTORS_MAX_SIZE 25
-
-struct workspace {
-	uint16_t max_msg_num;	/* # of RQ slots */
-	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
-	/* buffer containing mr_desc */
-	char descriptors[DESCRIPTORS_MAX_SIZE];
-};
-
 /* client side implementation */
 
 /* get next io_u message buffer in the round-robin fashion */

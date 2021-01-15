@@ -22,18 +22,6 @@
 #include <libpmem.h>
 #include <librpma.h>
 
-/*
- * Limited by the maximum length of the private data
- * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
- */
-#define DESCRIPTORS_MAX_SIZE 27
-
-struct workspace {
-	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
-	/* buffer containing mr_desc */
-	char descriptors[DESCRIPTORS_MAX_SIZE];
-};
-
 /* client side implementation */
 
 struct client_options {
