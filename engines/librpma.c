@@ -204,35 +204,6 @@ err_free_cd:
 	return 1;
 }
 
-static int client_post_init(struct thread_data *td)
-{
-	struct librpma_common_client_data *ccd = td->io_ops_data;
-	size_t io_us_size;
-	int ret;
-
-	/*
-	 * td->orig_buffer is not aligned. The engine requires aligned io_us
-	 * so FIO alignes up the address using the formula below.
-	 */
-	ccd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
-			td->o.mem_align;
-
-	/*
-	 * td->orig_buffer_size beside the space really consumed by io_us
-	 * has paddings which can be omitted for the memory registration.
-	 */
-	io_us_size = (unsigned long long)td_max_bs(td) *
-			(unsigned long long)td->o.iodepth;
-
-	if ((ret = rpma_mr_reg(ccd->peer, ccd->orig_buffer_aligned, io_us_size,
-			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
-			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
-			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT,
-			&ccd->orig_mr)))
-		librpma_td_verror(td, ret, "rpma_mr_reg");
-	return ret;
-}
-
 static void client_cleanup(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
@@ -664,7 +635,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.name			= "librpma_client",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= client_init,
-	.post_init		= client_post_init,
+	.post_init		= librpma_common_client_post_init,
 	.get_file_size		= client_get_file_size,
 	.open_file		= librpma_common_file_nop,
 	.queue			= client_queue,

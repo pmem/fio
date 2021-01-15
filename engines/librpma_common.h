@@ -102,4 +102,6 @@ int librpma_common_client_init(struct thread_data *td,
 
 int librpma_common_file_nop(struct thread_data *td, struct fio_file *f);
 
+int librpma_common_client_post_init(struct thread_data *td);
+
 #endif /* LIBRPMA_COMMON_H */
