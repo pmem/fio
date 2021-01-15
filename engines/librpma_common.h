@@ -82,4 +82,6 @@ struct librpma_common_client_data {
 int librpma_common_client_init(struct thread_data *td,
 	struct librpma_common_client_data *ccd, struct rpma_conn_cfg *cfg);
 
+void librpma_common_client_cleanup(struct thread_data *td);
+
 #endif /* LIBRPMA_COMMON_H */
