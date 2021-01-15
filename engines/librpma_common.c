@@ -234,3 +234,14 @@ int librpma_common_file_nop(struct thread_data *td, struct fio_file *f)
 	/* NOP */
 	return 0;
 }
+
+int librpma_common_client_get_file_size(struct thread_data *td,
+		struct fio_file *f)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+
+	f->real_file_size = ccd->ws_size;
+	fio_file_set_size_known(f);
+
+	return 0;
+}
