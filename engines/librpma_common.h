@@ -18,6 +18,8 @@
 
 #include "../fio.h"
 
+#include <librpma.h>
+
 #define librpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
@@ -76,5 +78,8 @@ struct librpma_common_client_data {
 	struct io_u **io_us_completed;
 	int io_u_completed_nr;
 };
+
+int librpma_common_client_init(struct thread_data *td,
+	struct librpma_common_client_data *ccd, struct rpma_conn_cfg *cfg);
 
 #endif /* LIBRPMA_COMMON_H */
