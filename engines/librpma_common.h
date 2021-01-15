@@ -80,4 +80,6 @@ struct librpma_common_client_data {
 	void *client_data;
 };
 
+int librpma_common_file_nop(struct thread_data *td, struct fio_file *f);
+
 #endif /* LIBRPMA_COMMON_H */

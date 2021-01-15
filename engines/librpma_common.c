@@ -103,3 +103,9 @@ void librpma_common_free(struct librpma_common_mem *mem)
 	else
 		free(mem->mem_ptr);
 }
+
+int librpma_common_file_nop(struct thread_data *td, struct fio_file *f)
+{
+	/* NOP */
+	return 0;
+}

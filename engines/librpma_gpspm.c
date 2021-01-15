@@ -487,18 +487,6 @@ static int client_get_file_size(struct thread_data *td, struct fio_file *f)
 	return 0;
 }
 
-static int client_open_file(struct thread_data *td, struct fio_file *f)
-{
-	/* XXX */
-	return 0;
-}
-
-static int client_close_file(struct thread_data *td, struct fio_file *f)
-{
-	/* XXX */
-	return 0;
-}
-
 static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
@@ -903,13 +891,13 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.init			= client_init,
 	.post_init		= client_post_init,
 	.get_file_size		= client_get_file_size,
-	.open_file		= client_open_file,
+	.open_file		= librpma_common_file_nop,
 	.queue			= client_queue,
 	.commit			= client_commit,
 	.getevents		= client_getevents,
 	.event			= client_event,
 	.errdetails		= client_errdetails,
-	.close_file		= client_close_file,
+	.close_file		= librpma_common_file_nop,
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
@@ -1452,12 +1440,6 @@ static enum fio_q_status server_queue(struct thread_data *td,
 	return FIO_Q_COMPLETED;
 }
 
-static int server_invalidate(struct thread_data *td, struct fio_file *file)
-{
-	/* NOP */
-	return 0;
-}
-
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_gpspm_server",
 	.version		= FIO_IOOPS_VERSION,
@@ -1466,7 +1448,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.open_file		= server_open_file,
 	.close_file		= server_close_file,
 	.queue			= server_queue,
-	.invalidate		= server_invalidate,
+	.invalidate		= librpma_common_file_nop,
 	.cleanup		= server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 				  FIO_NOSTATS,
