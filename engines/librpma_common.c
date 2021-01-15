@@ -105,9 +105,9 @@ void librpma_common_free(struct librpma_common_mem *mem)
 }
 
 int librpma_common_client_init(struct thread_data *td,
-		struct librpma_common_client_data *ccd,
 		struct rpma_conn_cfg *cfg)
 {
+	struct librpma_common_client_data *ccd;
 	struct librpma_common_client_options *o = td->eo;
 	struct ibv_context *dev = NULL;
 	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
@@ -115,6 +115,13 @@ int librpma_common_client_init(struct thread_data *td,
 	enum rpma_conn_event event;
 	struct rpma_conn_private_data pdata;
 	int ret;
+
+	/* allocate client's data */
+	ccd = calloc(1, sizeof(struct librpma_common_client_data));
+	if (ccd == NULL) {
+		td_verror(td, errno, "calloc");
+		return 1;
+	}
 
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
@@ -124,14 +131,14 @@ int librpma_common_client_init(struct thread_data *td,
 	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
 	if (ccd->io_us_queued == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		goto err_free_ccd;
 	}
 
 	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
 	if (ccd->io_us_flight == NULL) {
 		td_verror(td, errno, "calloc");
 		free(ccd->io_us_queued);
-		return 1;
+		goto err_free_ccd;
 	}
 
 	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
@@ -139,7 +146,7 @@ int librpma_common_client_init(struct thread_data *td,
 		td_verror(td, errno, "calloc");
 		free(ccd->io_us_queued);
 		free(ccd->io_us_flight);
-		return 1;
+		goto err_free_ccd;
 	}
 
 	/* obtain an IBV context for a remote IP address */
@@ -209,6 +216,8 @@ int librpma_common_client_init(struct thread_data *td,
 		goto err_conn_delete;
 	}
 
+	td->io_ops_data = ccd;
+
 	return 0;
 
 err_conn_delete:
@@ -225,6 +234,9 @@ err_free_io_u_queues:
 	free(ccd->io_us_queued);
 	free(ccd->io_us_flight);
 	free(ccd->io_us_completed);
+
+err_free_ccd:
+	free(ccd);
 
 	return 1;
 }
