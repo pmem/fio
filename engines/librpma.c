@@ -72,15 +72,9 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* allocate client's data */
-	ccd = calloc(1, sizeof(struct librpma_common_client_data));
-	if (ccd == NULL) {
-		td_verror(td, errno, "calloc");
-		return 1;
-	}
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
-		free(ccd);
 		return 1;
 	}
 
@@ -145,8 +139,10 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 
-	if ((ret = librpma_common_client_init(td, ccd, cfg)))
+	if ((ret = librpma_common_client_init(td, cfg)))
 		goto err_cfg_delete;
+
+	ccd = td->io_ops_data;
 
 	/* get flush type of the remote node */
 	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr, &remote_flush_type))) {
@@ -181,7 +177,6 @@ static int client_init(struct thread_data *td)
 	}
 
 	ccd->client_data = cd;
-	td->io_ops_data = ccd;
 
 	return 0;
 
@@ -193,13 +188,13 @@ err_cleanup_common:
 	free(ccd->io_us_queued);
 	free(ccd->io_us_flight);
 	free(ccd->io_us_completed);
+	free(ccd);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
 err_free_cd:
 	free(cd);
-	free(ccd);
 
 	return 1;
 }
