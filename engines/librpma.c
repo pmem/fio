@@ -315,109 +315,6 @@ static inline int client_io_flush(struct thread_data *td,
 	return 0;
 }
 
-static int client_commit(struct thread_data *td)
-{
-	struct librpma_common_client_data *ccd = td->io_ops_data;
-	int flags = RPMA_F_COMPLETION_ON_ERROR;
-	struct timespec now;
-	bool fill_time;
-	int ret;
-	int i;
-	struct io_u *flush_first_io_u = NULL;
-	unsigned long long int flush_len = 0;
-
-	if (!ccd->io_us_queued)
-		return -1;
-
-	/* execute all io_us from queued[] */
-	for (i = 0; i < ccd->io_u_queued_nr; i++) {
-		struct io_u *io_u = ccd->io_us_queued[i];
-
-		if (io_u->ddir == DDIR_READ) {
-			if (i + 1 == ccd->io_u_queued_nr || ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
-				flags = RPMA_F_COMPLETION_ALWAYS;
-			/* post an RDMA read operation */
-			if ((ret = librpma_common_client_io_read(td, io_u, flags)))
-				return -1;
-		} else if (io_u->ddir == DDIR_WRITE) {
-			/* post an RDMA write operation */
-			ret = librpma_common_client_io_write(td, io_u);
-			if (ret)
-				return -1;
-
-			/* cache the first io_u in the sequence */
-			if (flush_first_io_u == NULL)
-				flush_first_io_u = io_u;
-
-			/*
-			 * the flush length is the sum of all io_u's creating
-			 * the sequence
-			 */
-			flush_len += io_u->xfer_buflen;
-
-			/*
-			 * if io_u's are random the rpma_flush is required after
-			 * each one of them
-			 */
-			if (!td_random(td)) {
-				/* when the io_u's are sequential and
-				 * the current io_u is not the last one and
-				 * the next one is also a write operation
-				 * the flush can be postponed by one io_u and
-				 * cover all of them which build a continuous
-				 * sequence
-				 */
-				if (i + 1 < ccd->io_u_queued_nr &&
-						ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
-					continue;
-			}
-
-			/* flush all writes which build a continuous sequence */
-			ret = client_io_flush(td, flush_first_io_u, io_u, flush_len);
-			if (ret)
-				return -1;
-
-			/*
-			 * reset the flush parameters in preparation for
-			 * the next one
-			 */
-			flush_first_io_u = NULL;
-			flush_len = 0;
-		} else {
-			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
-			return -1;
-		}
-	}
-
-	if ((fill_time = fio_fill_issue_time(td)))
-		fio_gettime(&now, NULL);
-
-	/* move executed io_us from queued[] to flight[] */
-	for (i = 0; i < ccd->io_u_queued_nr; i++) {
-		struct io_u *io_u = ccd->io_us_queued[i];
-
-		/* FIO does not do this if the engine is asynchronous */
-		if (fill_time)
-			memcpy(&io_u->issue_time, &now, sizeof(now));
-
-		/* move executed io_us from queued[] to flight[] */
-		ccd->io_us_flight[ccd->io_u_flight_nr] = io_u;
-		ccd->io_u_flight_nr++;
-
-		/*
-		 * FIO says:
-		 * If an engine has the commit hook it has to call io_u_queued() itself.
-		 */
-		io_u_queued(td, io_u);
-	}
-
-	/* FIO does not do this if an engine has the commit hook. */
-	io_u_mark_submit(td, ccd->io_u_queued_nr);
-	ccd->io_u_queued_nr = 0;
-
-	return 0;
-}
-
 /*
  * RETURN VALUE
  * - > 0  - a number of completed io_us
@@ -562,7 +459,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.get_file_size		= client_get_file_size,
 	.open_file		= librpma_common_file_nop,
 	.queue			= librpma_common_client_queue,
-	.commit			= client_commit,
+	.commit			= librpma_common_client_commit,
 	.getevents		= client_getevents,
 	.event			= client_event,
 	.errdetails		= client_errdetails,

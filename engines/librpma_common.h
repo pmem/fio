@@ -111,6 +111,8 @@ int librpma_common_file_nop(struct thread_data *td, struct fio_file *f);
 enum fio_q_status librpma_common_client_queue(struct thread_data *td,
 		struct io_u *io_u);
 
+int librpma_common_client_commit(struct thread_data *td);
+
 static inline int librpma_common_client_io_read(struct thread_data *td,
 		struct io_u *io_u, int flags)
 {
