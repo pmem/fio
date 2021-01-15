@@ -24,6 +24,16 @@
 /* ceil(a / b) = (a + b - 1) / b */
 #define LIBRPMA_CEIL(a, b) (((a) + (b) - 1) / (b))
 
+struct librpma_common_client_options {
+	/*
+	 * FIO considers .off1 == 0 absent so the first meaningful field has to
+	 * have padding ahead of it.
+	 */
+	void *pad;
+	char *hostname;
+	char *port;
+};
+
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
 
 int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
