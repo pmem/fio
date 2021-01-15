@@ -18,6 +18,8 @@
 
 #include "../fio.h"
 
+#include <librpma.h>
+
 #define librpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
@@ -75,6 +77,8 @@ struct librpma_common_client_data {
 	/* ious's base address memory registration (cd->orig_buffer_aligned) */
 	struct rpma_mr_local *orig_mr;
 
+	struct librpma_common_workspace *ws;
+
 	/* a server's memory representation */
 	struct rpma_mr_remote *server_mr;
 
@@ -92,5 +96,8 @@ struct librpma_common_client_data {
 	/* engine-specific client data */
 	void *client_data;
 };
+
+int librpma_common_client_init(struct thread_data *td,
+	struct librpma_common_client_data *ccd, struct rpma_conn_cfg *cfg);
 
 #endif /* LIBRPMA_COMMON_H */

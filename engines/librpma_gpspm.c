@@ -90,23 +90,11 @@ struct client_data {
 
 static int client_init(struct thread_data *td)
 {
-	struct librpma_common_client_options *o = td->eo;
 	struct librpma_common_client_data *ccd;
 	struct client_data *cd;
-	struct ibv_context *dev = NULL;
-	struct rpma_conn_cfg *cfg = NULL;
-	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
-	struct rpma_conn_req *req = NULL;
-	enum rpma_conn_event event;
 	uint32_t write_num;
-	struct rpma_conn_private_data pdata;
-	struct librpma_common_workspace *ws;
-	size_t server_mr_size;
-	int ret = 1;
-
-	/* configure logging thresholds to see more details */
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
+	struct rpma_conn_cfg *cfg = NULL;
+	int ret;
 	
 	/* not supported readwrite = read / trim / randread / randtrim / rw / randrw / trimwrite */
 	if (td_read(td) || td_trim(td)) {
@@ -125,41 +113,6 @@ static int client_init(struct thread_data *td)
 		td_verror(td, errno, "calloc");
 		free(ccd);
 		return 1;
-	}
-
-	/* allocate all in-memory queues */
-	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (ccd->io_us_queued == NULL) {
-		td_verror(td, errno, "calloc");
-		goto err_free_cd;
-	}
-
-	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (ccd->io_us_flight == NULL) {
-		td_verror(td, errno, "calloc");
-		goto err_free_io_us_queued;
-	}
-
-	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
-	if (ccd->io_us_completed == NULL) {
-		td_verror(td, errno, "calloc");
-		goto err_free_io_us_flight;
-	}
-
-	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->hostname,
-				RPMA_UTIL_IBV_CONTEXT_REMOTE,
-				&dev);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
-		goto err_free_io_us_completed;
-	}
-
-	/* create a connection configuration object */
-	ret = rpma_conn_cfg_new(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_free_io_us_completed;
 	}
 
 	/*
@@ -183,6 +136,13 @@ static int client_init(struct thread_data *td)
 			 */
 			cd->msg_num = LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
 		}
+	}
+
+	/* create a connection configuration object */
+	ret = rpma_conn_cfg_new(&cfg);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		goto err_free_cd;
 	}
 
 	/*
@@ -210,100 +170,33 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 	
-	/* create a new peer object */
-	ret = rpma_peer_new(dev, &ccd->peer);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_peer_new");
+	if ((ret = librpma_common_client_init(td, ccd, cfg)))
 		goto err_cfg_delete;
-	}
-
-	/* create a connection request */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		goto err_peer_delete;
-	ret = rpma_conn_req_new(ccd->peer, o->hostname, port_td, cfg, &req);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_req_new");
-		goto err_peer_delete;
-	}
-
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
-		goto err_peer_delete;
-	}
-
-	/* connect the connection request and obtain the connection object */
-	ret = rpma_conn_req_connect(&req, NULL, &ccd->conn);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_req_connect");
-		goto err_req_delete;
-	}
-
-	/* wait for the connection to establish */
-	ret = rpma_conn_next_event(ccd->conn, &event);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_next_event");
-		goto err_conn_delete;
-	} else if (event != RPMA_CONN_ESTABLISHED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
-			rpma_utils_conn_event_2str(event));
-		goto err_conn_delete;
-	}
-
-	/* get the connection's private data sent from the server */
-	if ((ret = rpma_conn_get_private_data(ccd->conn, &pdata)))
-		goto err_conn_delete;
-
-	/* create the server's workspace representation */
-	ws = pdata.ptr;
 
 	/* validate the server's RQ capacity */
-	if (cd->msg_num > ws->max_msg_num) {
+	if (cd->msg_num > ccd->ws->max_msg_num) {
 		log_err(
 			"server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
-			ws->max_msg_num, cd->msg_num);
-		goto err_conn_delete;
+			ccd->ws->max_msg_num, cd->msg_num);
+		goto err_cleanup_common;
 	}
 
-	/* create the server's memory representation */
-	if ((ret = rpma_mr_remote_from_descriptor(&ws->descriptors[0],
-			ws->mr_desc_size, &ccd->server_mr)))
-		goto err_conn_delete;
-
-	/* get the total size of the shared server memory */
-	if ((ret = rpma_mr_remote_get_size(ccd->server_mr, &server_mr_size))) {
-		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
-		goto err_conn_delete;
-	}
-
-	ccd->ws_size = server_mr_size;
 	ccd->client_data = cd;
 	td->io_ops_data = ccd;
 
 	return 0;
 
-err_conn_delete:
+err_cleanup_common:
+	/* XXX to be replaced with librpma_common_client_cleanup */
 	(void) rpma_conn_disconnect(ccd->conn);
 	(void) rpma_conn_delete(&ccd->conn);
-
-err_req_delete:
-	if (req)
-		(void) rpma_conn_req_delete(&req);
-err_peer_delete:
 	(void) rpma_peer_delete(&ccd->peer);
+	free(ccd->io_us_queued);
+	free(ccd->io_us_flight);
+	free(ccd->io_us_completed);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
-
-err_free_io_us_completed:
-	free(ccd->io_us_completed);
-
-err_free_io_us_flight:
-	free(ccd->io_us_flight);
-
-err_free_io_us_queued:
-	free(ccd->io_us_queued);
 
 err_free_cd:
 	free(cd);
