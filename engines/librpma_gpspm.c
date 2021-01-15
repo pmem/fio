@@ -1163,7 +1163,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	ws_ptr = librpma_common_allocate_pmem(td, f->file_name, mem_size,
 			&sd->mem);
 	if (ws_ptr == NULL)
-		return 1;
+		goto err_ep_shutdown;
 
 	f->real_file_size = mem_size;
 
