@@ -357,16 +357,6 @@ static void client_cleanup(struct thread_data *td)
 	free(ccd);
 }
 
-static int client_get_file_size(struct thread_data *td, struct fio_file *f)
-{
-	struct librpma_common_client_data *ccd = td->io_ops_data;
-
-	f->real_file_size = ccd->ws_size;
-	fio_file_set_size_known(f);
-
-	return 0;
-}
-
 static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
@@ -770,7 +760,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.version		= FIO_IOOPS_VERSION,
 	.init			= client_init,
 	.post_init		= client_post_init,
-	.get_file_size		= client_get_file_size,
+	.get_file_size		= librpma_common_client_get_file_size,
 	.open_file		= librpma_common_file_nop,
 	.queue			= client_queue,
 	.commit			= client_commit,
