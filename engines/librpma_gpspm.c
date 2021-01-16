@@ -430,13 +430,34 @@ static inline int client_io_flush(struct thread_data *td,
 	return 0;
 }
 
+static int client_get_io_u_index(struct rpma_completion *cmpl,
+		unsigned int *io_u_index)
+{
+	GPSPMFlushResponse *flush_resp;
+
+	if (cmpl->op != RPMA_OP_RECV)
+		return 1;
+
+	/* unpack a response from the received buffer */
+	flush_resp = gpspm_flush_response__unpack(NULL,
+			cmpl->byte_len, cmpl->op_context);
+	if (flush_resp == NULL) {
+		log_err("Cannot unpack the flush response buffer\n");
+		return 1;
+	}
+
+	memcpy(io_u_index, &flush_resp->op_context, sizeof(unsigned int));
+
+	gpspm_flush_response__free_unpacked(flush_resp, NULL);
+
+	return 0;
+}
+
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
-	GPSPMFlushResponse *flush_resp;
-	/* io_u->index of completed io_u (flush_resp->op_context) */
 	unsigned int io_u_index;
 	int ret;
 
@@ -469,19 +490,13 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 
 		if (cmpl.op == RPMA_OP_SEND)
 			++ccd->op_send_completed;
-		else if (cmpl.op == RPMA_OP_RECV)
+		else
 			break;
 	} while (1);
 
-	/* unpack a response from the received buffer */
-	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
-			cmpl.op_context);
-	if (flush_resp == NULL) {
-		log_err("Cannot unpack the flush response buffer\n");
+	if (client_get_io_u_index(&cmpl, &io_u_index))
 		goto err;
-	}
 
-	memcpy(&io_u_index, &flush_resp->op_context, sizeof(unsigned int));
 	if (io_u->index != io_u_index) {
 		log_err(
 			"no matching io_u for received completion found (io_u_index=%u)\n",
@@ -650,24 +665,16 @@ static int client_getevent_process(struct thread_data *td)
 		return 0;
 	}
 
-	/* unpack a response from the received buffer */
-	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
-			cmpl.op_context);
-	if (flush_resp == NULL) {
-		log_err("Cannot unpack the flush response buffer\n");
+	if (client_get_io_u_index(&cmpl, &io_u_index))
 		return -1;
-	}
 
 	/* look for an io_u being completed */
-	memcpy(&io_u_index, &flush_resp->op_context, sizeof(unsigned int));
 	for (i = 0; i < ccd->io_u_flight_nr; ++i) {
 		if (ccd->io_us_flight[i]->index == io_u_index) {
 			cmpl_num = i + 1;
 			break;
 		}
 	}
-
-	gpspm_flush_response__free_unpacked(flush_resp, NULL);
 
 	/* if no matching io_u has been found */
 	if (cmpl_num == 0) {
