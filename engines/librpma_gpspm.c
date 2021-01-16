@@ -84,7 +84,6 @@ struct client_data {
 	/* resources for messaging buffer */
 	uint32_t msg_num;
 	uint32_t msg_curr;
-	uint32_t msg_send_completed;
 	struct rpma_mr_local *msg_mr;
 };
 
@@ -214,8 +213,6 @@ static int client_post_init(struct thread_data *td)
 	int ret;
 
 	/* message buffers initialization and registration */
-	cd->msg_curr = 0;
-	cd->msg_send_completed = 0;
 	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
 	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
 			page_size, io_us_msgs_size))) {
@@ -274,7 +271,7 @@ static void client_cleanup(struct thread_data *td)
 	 * Note: If any operation will fail we still can send the termination
 	 * notice.
 	 */
-	while (cd->msg_curr > cd->msg_send_completed) {
+	while (cd->msg_curr > ccd->op_send_completed) {
 		/* get a completion */
 		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
 		if (ret == RPMA_E_NO_COMPLETION) {
@@ -290,7 +287,7 @@ static void client_cleanup(struct thread_data *td)
 			break;
 
 		if (cmpl.op == RPMA_OP_SEND)
-			++cd->msg_send_completed;
+			++ccd->op_send_completed;
 	}
 
 	/* prepare the last flush message and pack it to the send buffer */
@@ -437,7 +434,6 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
 	struct rpma_completion cmpl;
 	GPSPMFlushResponse *flush_resp;
 	/* io_u->index of completed io_u (flush_resp->op_context) */
@@ -472,7 +468,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			goto err;
 
 		if (cmpl.op == RPMA_OP_SEND)
-			++cd->msg_send_completed;
+			++ccd->op_send_completed;
 		else if (cmpl.op == RPMA_OP_RECV)
 			break;
 	} while (1);
@@ -617,7 +613,6 @@ static int client_commit(struct thread_data *td)
 static int client_getevent_process(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
 	struct rpma_completion cmpl;
 	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
@@ -650,7 +645,7 @@ static int client_getevent_process(struct thread_data *td)
 
 	if (cmpl.op != RPMA_OP_RECV) {
 		if (cmpl.op == RPMA_OP_SEND)
-			++cd->msg_send_completed;
+			++ccd->op_send_completed;
 
 		return 0;
 	}
