@@ -93,6 +93,9 @@ struct librpma_common_client_data {
 	struct io_u **io_us_completed;
 	int io_u_completed_nr;
 
+	/* completion counter */
+	uint32_t op_send_completed;
+
 	/* engine-specific client data */
 	void *client_data;
 };
