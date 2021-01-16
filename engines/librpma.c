@@ -349,12 +349,19 @@ static inline int client_io_flush(struct thread_data *td,
 	return 0;
 }
 
+static int client_get_io_u_index(struct rpma_completion *cmpl,
+		unsigned int *io_u_index)
+{
+	memcpy(io_u_index, &cmpl->op_context, sizeof(unsigned int));
+
+	return 0;
+}
+
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
-	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
 	int ret;
 
@@ -377,18 +384,28 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	do {
 		/* get a completion */
 		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
-		if (ret == 0) {
-			/* if io_u has completed with an error */
-			if (cmpl.op_status != IBV_WC_SUCCESS)
-				goto err;
-		} else if (ret != RPMA_E_NO_COMPLETION) {
+		if (ret == RPMA_E_NO_COMPLETION) {
+			/* lack of completion is not an error */
+			continue;
+		} else if (ret != 0) {
 			/* an error occurred */
 			librpma_td_verror(td, ret, "rpma_conn_completion_get");
 			goto err;
 		}
-	} while (ret == RPMA_E_NO_COMPLETION);
 
-	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
+		/* if io_us has completed with an error */
+		if (cmpl.op_status != IBV_WC_SUCCESS)
+			goto err;
+
+		if (cmpl.op == RPMA_OP_SEND)
+			++ccd->op_send_completed;
+		else
+			break;
+	} while (1);
+
+	if (client_get_io_u_index(&cmpl, &io_u_index))
+		goto err;
+
 	if (io_u->index != io_u_index) {
 		log_err(
 			"no matching io_u for received completion found (io_u_index=%u)\n",
@@ -535,7 +552,6 @@ static int client_getevent_process(struct thread_data *td)
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
 	unsigned int io_us_error = 0;
-	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
 	/* # of completed io_us */
 	int cmpl_num = 0;
@@ -559,8 +575,10 @@ static int client_getevent_process(struct thread_data *td)
 	if (cmpl.op_status != IBV_WC_SUCCESS)
 		io_us_error = cmpl.op_status;
 
+	if (client_get_io_u_index(&cmpl, &io_u_index))
+		return -1;
+
 	/* look for an io_u being completed */
-	memcpy(&io_u_index, &cmpl.op_context, sizeof(unsigned int));
 	for (i = 0; i < ccd->io_u_flight_nr; ++i) {
 		if (ccd->io_us_flight[i]->index == io_u_index) {
 			cmpl_num = i + 1;
