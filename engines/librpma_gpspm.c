@@ -84,7 +84,6 @@ struct client_data {
 	/* resources for messaging buffer */
 	uint32_t msg_num;
 	uint32_t msg_curr;
-	uint32_t msg_send_completed;
 	struct rpma_mr_local *msg_mr;
 };
 
@@ -201,8 +200,6 @@ static int client_post_init(struct thread_data *td)
 	int ret;
 
 	/* message buffers initialization and registration */
-	cd->msg_curr = 0;
-	cd->msg_send_completed = 0;
 	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
 	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
 			page_size, io_us_msgs_size))) {
@@ -241,7 +238,7 @@ static void client_cleanup(struct thread_data *td)
 	 * Note: If any operation will fail we still can send the termination
 	 * notice.
 	 */
-	while (cd->msg_curr > cd->msg_send_completed) {
+	while (cd->msg_curr > ccd->op_send_completed) {
 		/* get a completion */
 		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
 		if (ret == RPMA_E_NO_COMPLETION) {
@@ -257,7 +254,7 @@ static void client_cleanup(struct thread_data *td)
 			break;
 
 		if (cmpl.op == RPMA_OP_SEND)
-			++cd->msg_send_completed;
+			++ccd->op_send_completed;
 	}
 
 	/* prepare the last flush message and pack it to the send buffer */
@@ -353,14 +350,34 @@ static inline int client_io_flush(struct thread_data *td,
 	return 0;
 }
 
+static int client_get_io_u_index(struct rpma_completion *cmpl,
+		unsigned int *io_u_index)
+{
+	GPSPMFlushResponse *flush_resp;
+
+	if (cmpl->op != RPMA_OP_RECV)
+		return 1;
+
+	/* unpack a response from the received buffer */
+	flush_resp = gpspm_flush_response__unpack(NULL,
+			cmpl->byte_len, cmpl->op_context);
+	if (flush_resp == NULL) {
+		log_err("Cannot unpack the flush response buffer\n");
+		return 1;
+	}
+
+	memcpy(io_u_index, &flush_resp->op_context, sizeof(unsigned int));
+
+	gpspm_flush_response__free_unpacked(flush_resp, NULL);
+
+	return 0;
+}
+
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 					  struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
 	struct rpma_completion cmpl;
-	GPSPMFlushResponse *flush_resp;
-	/* io_u->index of completed io_u (flush_resp->op_context) */
 	unsigned int io_u_index;
 	int ret;
 
@@ -392,20 +409,14 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			goto err;
 
 		if (cmpl.op == RPMA_OP_SEND)
-			++cd->msg_send_completed;
-		else if (cmpl.op == RPMA_OP_RECV)
+			++ccd->op_send_completed;
+		else
 			break;
 	} while (1);
 
-	/* unpack a response from the received buffer */
-	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
-			cmpl.op_context);
-	if (flush_resp == NULL) {
-		log_err("Cannot unpack the flush response buffer\n");
+	if (client_get_io_u_index(&cmpl, &io_u_index))
 		goto err;
-	}
 
-	memcpy(&io_u_index, &flush_resp->op_context, sizeof(unsigned int));
 	if (io_u->index != io_u_index) {
 		log_err(
 			"no matching io_u for received completion found (io_u_index=%u)\n",
@@ -537,7 +548,6 @@ static int client_commit(struct thread_data *td)
 static int client_getevent_process(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
 	struct rpma_completion cmpl;
 	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
@@ -570,29 +580,21 @@ static int client_getevent_process(struct thread_data *td)
 
 	if (cmpl.op != RPMA_OP_RECV) {
 		if (cmpl.op == RPMA_OP_SEND)
-			++cd->msg_send_completed;
+			++ccd->op_send_completed;
 
 		return 0;
 	}
 
-	/* unpack a response from the received buffer */
-	flush_resp = gpspm_flush_response__unpack(NULL, cmpl.byte_len,
-			cmpl.op_context);
-	if (flush_resp == NULL) {
-		log_err("Cannot unpack the flush response buffer\n");
+	if (client_get_io_u_index(&cmpl, &io_u_index))
 		return -1;
-	}
 
 	/* look for an io_u being completed */
-	memcpy(&io_u_index, &flush_resp->op_context, sizeof(unsigned int));
 	for (i = 0; i < ccd->io_u_flight_nr; ++i) {
 		if (ccd->io_us_flight[i]->index == io_u_index) {
 			cmpl_num = i + 1;
 			break;
 		}
 	}
-
-	gpspm_flush_response__free_unpacked(flush_resp, NULL);
 
 	/* if no matching io_u has been found */
 	if (cmpl_num == 0) {
