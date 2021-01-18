@@ -591,3 +591,62 @@ struct fio_option librpma_common_fio_server_options[] = {
 		.name	= NULL,
 	},
 };
+
+int librpma_common_server_init(struct thread_data *td)
+{
+	struct librpma_common_server_options *o = td->eo;
+	struct librpma_common_server_data *csd;
+	struct ibv_context *dev = NULL;
+	int ret = 1;
+
+	/* configure logging thresholds to see more details */
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
+
+	/* allocate server's data */
+	csd = calloc(1, sizeof(struct librpma_common_server_data));
+	if (csd == NULL) {
+		td_verror(td, errno, "calloc");
+		return 1;
+	}
+
+	/* obtain an IBV context for a remote IP address */
+	ret = rpma_utils_get_ibv_context(o->bindname,
+				RPMA_UTIL_IBV_CONTEXT_LOCAL,
+				&dev);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		goto err_free_csd;
+	}
+
+	/* create a new peer object */
+	ret = rpma_peer_new(dev, &csd->peer);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_peer_new");
+		goto err_free_csd;
+	}
+
+	td->io_ops_data = csd;
+
+	return 0;
+
+err_free_csd:
+	free(csd);
+
+	return 1;
+}
+
+void librpma_common_server_cleanup(struct thread_data *td)
+{
+	struct librpma_common_server_data *csd =  td->io_ops_data;
+	int ret;
+
+	if (csd == NULL)
+		return;
+
+	/* free the peer */
+	if ((ret = rpma_peer_delete(&csd->peer)))
+		librpma_td_verror(td, ret, "rpma_peer_delete");
+
+	free(csd);
+}
