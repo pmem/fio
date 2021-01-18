@@ -533,6 +533,120 @@ int librpma_common_client_commit(struct thread_data *td)
 	return 0;
 }
 
+/*
+ * RETURN VALUE
+ * - > 0  - a number of completed io_us
+ * -   0  - when no complicitions received
+ * - (-1) - when an error occurred
+ */
+static int client_getevent_process(struct thread_data *td)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	/* io_u->index of completed io_u (cmpl.op_context) */
+	unsigned int io_u_index;
+	/* # of completed io_us */
+	int cmpl_num = 0;
+	/* helpers */
+	struct io_u *io_u;
+	int i;
+	int ret;
+
+	/* get a completion */
+	if ((ret = rpma_conn_completion_get(ccd->conn, &cmpl))) {
+		/* lack of completion is not an error */
+		if (ret == RPMA_E_NO_COMPLETION) {
+			/* lack of completion is not an error */
+			return 0;
+		}
+
+		/* an error occurred */
+		librpma_td_verror(td, ret, "rpma_conn_completion_get");
+		return -1;
+	}
+
+	/* if io_us has completed with an error */
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
+		td->error = cmpl.op_status;
+		return -1;
+	}
+
+	if (cmpl.op != RPMA_OP_RECV) {
+		if (cmpl.op == RPMA_OP_SEND)
+			++ccd->op_send_completed;
+
+		return 0;
+	}
+
+	if (ccd->get_io_u_index(&cmpl, &io_u_index))
+		return -1;
+
+	/* look for an io_u being completed */
+	for (i = 0; i < ccd->io_u_flight_nr; ++i) {
+		if (ccd->io_us_flight[i]->index == io_u_index) {
+			cmpl_num = i + 1;
+			break;
+		}
+	}
+
+	/* if no matching io_u has been found */
+	if (cmpl_num == 0) {
+		log_err(
+			"no matching io_u for received completion found (io_u_index=%u)\n",
+			io_u_index);
+		return -1;
+	}
+
+	/* move completed io_us to the completed in-memory queue */
+	for (i = 0; i < cmpl_num; ++i) {
+		/* get and prepare io_u */
+		io_u = ccd->io_us_flight[i];
+
+		/* append to the queue */
+		ccd->io_us_completed[ccd->io_u_completed_nr] = io_u;
+		ccd->io_u_completed_nr++;
+	}
+
+	/* remove completed io_us from the flight queue */
+	for (i = cmpl_num; i < ccd->io_u_flight_nr; ++i)
+		ccd->io_us_flight[i - cmpl_num] = ccd->io_us_flight[i];
+	ccd->io_u_flight_nr -= cmpl_num;
+
+	return cmpl_num;
+}
+
+int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
+		unsigned int max, const struct timespec *t)
+{
+	/* total # of completed io_us */
+	int cmpl_num_total = 0;
+	/* # of completed io_us from a single event */
+	int cmpl_num;
+
+	do {
+		cmpl_num = client_getevent_process(td);
+		if (cmpl_num > 0) {
+			/* new completions collected */
+			cmpl_num_total += cmpl_num;
+		} else if (cmpl_num == 0) {
+			if (cmpl_num_total >= min)
+				break;
+
+			/* To reduce CPU consumption one can use
+			 * the rpma_conn_completion_wait() function.
+			 * Note this greatly increase the latency
+			 * and make the results less stable.
+			 * The bandwidth stays more or less the same.
+			 */
+		} else {
+			/* an error occurred */
+			return -1;
+		}
+	} while (cmpl_num_total < max);
+
+	return cmpl_num_total;
+}
+
 struct io_u *librpma_common_client_event(struct thread_data *td, int event)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
