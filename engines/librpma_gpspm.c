@@ -686,15 +686,9 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 #define IO_U_BUFF_OFF_SERVER(i) (i * IO_U_BUF_LEN)
 
 struct server_data {
-	struct rpma_peer *peer;
-
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
 
-	/* resources of an incoming connection */
-	struct rpma_conn *conn;
-
-	struct librpma_common_mem mem;
 	char *ws_ptr;
 	struct rpma_mr_local *ws_mr;
 
@@ -710,20 +704,20 @@ struct server_data {
 
 static int server_init(struct thread_data *td)
 {
-	struct librpma_common_server_options *o = td->eo;
+	struct librpma_common_server_data *csd;
 	struct server_data *sd;
-	struct ibv_context *dev = NULL;
 	int ret = 1;
 
-	/* configure logging thresholds to see more details */
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
+	if ((ret = librpma_common_server_init(td)))
+		return ret;
+
+	csd = td->io_ops_data;
 
 	/* allocate server's data */
-	sd = calloc(1, sizeof(struct server_data));
+	sd = calloc(1, sizeof(struct librpma_common_server_data));
 	if (sd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		goto err_server_cleanup;
 	}
 
 	/* allocate in-memory queue */
@@ -733,38 +727,23 @@ static int server_init(struct thread_data *td)
 		goto err_free_sd;
 	}
 
-	/* obtain an IBV context for a local IP address */
-	ret = rpma_utils_get_ibv_context(o->bindname,
-				RPMA_UTIL_IBV_CONTEXT_LOCAL,
-				&dev);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
-		goto err_free_msg_queue;
-	}
-
-	/* create a new peer object */
-	ret = rpma_peer_new(dev, &sd->peer);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_peer_new");
-		goto err_free_sd;
-	}
-
-	td->io_ops_data = sd;
+	csd->server_data = sd;
 
 	return 0;
 
-err_free_msg_queue:
-	free(sd->msgs_queued);
-
 err_free_sd:
 	free(sd);
+
+err_server_cleanup:
+	librpma_common_server_cleanup(td);
 
 	return 1;
 }
 
 static int server_post_init(struct thread_data *td)
 {
-	struct server_data *sd = td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
 	size_t io_us_size;
 	size_t io_u_buflen;
 	int ret;
@@ -797,7 +776,7 @@ static int server_post_init(struct thread_data *td)
 	io_us_size = (unsigned long long)io_u_buflen *
 			(unsigned long long)td->o.iodepth;
 
-	ret = rpma_mr_reg(sd->peer, sd->orig_buffer_aligned, io_us_size,
+	ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
 			&sd->msg_mr);
 	if (ret) {
@@ -810,8 +789,16 @@ static int server_post_init(struct thread_data *td)
 
 static void server_cleanup(struct thread_data *td)
 {
-	struct server_data *sd =  td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd;
 	int ret;
+
+	if (csd == NULL)
+		return;
+
+	sd = csd->server_data;
+
+	librpma_common_server_cleanup(td);
 
 	if (sd == NULL)
 		return;
@@ -820,17 +807,14 @@ static void server_cleanup(struct thread_data *td)
 	if ((ret = rpma_mr_dereg(&sd->msg_mr)))
 		librpma_td_verror(td, ret, "rpma_mr_dereg");
 
-	/* free the peer */
-	if ((ret = rpma_peer_delete(&sd->peer)))
-		librpma_td_verror(td, ret, "rpma_peer_delete");
-
 	free(sd->msgs_queued);
 	free(sd);
 }
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
-	struct server_data *sd =  td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
 	struct librpma_common_server_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	size_t mem_size = td->o.size;
@@ -863,7 +847,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		return 1;
 
-	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
+	ret = rpma_ep_listen(csd->peer, o->bindname, port_td, &ep);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_ep_listen");
 		return 1;
@@ -871,13 +855,13 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	/* allocation from PMEM using pmem_map_file() */
 	ws_ptr = librpma_common_allocate_pmem(td, f->file_name, mem_size,
-			&sd->mem);
+			&csd->mem);
 	if (ws_ptr == NULL)
 		goto err_ep_shutdown;
 
 	f->real_file_size = mem_size;
 
-	ret = rpma_mr_reg(sd->peer, ws_ptr, mem_size,
+	ret = rpma_mr_reg(csd->peer, ws_ptr, mem_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
 			&mmap_mr);
@@ -970,7 +954,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 
 	sd->ws_ptr = ws_ptr;
 	sd->ws_mr = mmap_mr;
-	sd->conn = conn;
+	csd->conn = conn;
 
 	return 0;
 
@@ -987,7 +971,7 @@ err_mr_dereg:
 	(void) rpma_mr_dereg(&mmap_mr);
 
 err_pmem_unmap:
-	librpma_common_free(&sd->mem);
+	librpma_common_free(&csd->mem);
 
 err_ep_shutdown:
 	(void) rpma_ep_shutdown(&ep);
@@ -997,24 +981,25 @@ err_ep_shutdown:
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	struct server_data *sd =  td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	int ret;
 	int rv;
 
 	/* wait for the connection to be closed */
-	ret = rpma_conn_next_event(sd->conn, &conn_event);
+	ret = rpma_conn_next_event(csd->conn, &conn_event);
 	if (!ret && conn_event != RPMA_CONN_CLOSED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
 		rv = 1;
 	}
 
-	if ((ret = rpma_conn_disconnect(sd->conn))) {
+	if ((ret = rpma_conn_disconnect(csd->conn))) {
 		librpma_td_verror(td, ret, "rpma_conn_disconnect");
 		rv |= ret;
 	}
 
-	if ((ret = rpma_conn_delete(&sd->conn))) {
+	if ((ret = rpma_conn_delete(&csd->conn))) {
 		librpma_td_verror(td, ret, "rpma_conn_delete");
 		rv |= ret;
 	}
@@ -1024,14 +1009,15 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 		rv |= ret;
 	}
 
-	librpma_common_free(&sd->mem);
+	librpma_common_free(&csd->mem);
 
 	return rv ? -1 : 0;
 }
 
 static int server_qe_process(struct thread_data *td, struct rpma_completion *cmpl)
 {
-	struct server_data *sd = td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
 	GPSPMFlushRequest *flush_req;
 	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
 	size_t flush_resp_size = 0;
@@ -1071,7 +1057,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	/* initiate the next receive operation */
-	ret = rpma_recv(sd->conn, sd->msg_mr, recv_buff_offset,
+	ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset,
 			MAX_MSG_SIZE, (const void *)(uintptr_t)msg_index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_recv");
@@ -1091,7 +1077,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	gpspm_flush_request__free_unpacked(flush_req, NULL);
 
 	/* send the flush response */
-	if ((ret = rpma_send(sd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
+	if ((ret = rpma_send(csd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
 			RPMA_F_COMPLETION_ALWAYS, NULL)))
 		goto err_terminate;
 	--sd->msg_sqe_available;
@@ -1106,7 +1092,8 @@ err_terminate:
 
 static inline int server_queue_process(struct thread_data *td)
 {
-	struct server_data *sd = td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
 	int ret;
 	int i;
 
@@ -1133,11 +1120,12 @@ static inline int server_queue_process(struct thread_data *td)
 
 static int server_cmpl_process(struct thread_data *td)
 {
-	struct server_data *sd = td->io_ops_data;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
 	struct rpma_completion *cmpl = &sd->msgs_queued[sd->msg_queued_nr];
 	int ret;
 
-	ret = rpma_conn_completion_get(sd->conn, cmpl);
+	ret = rpma_conn_completion_get(csd->conn, cmpl);
 	if (ret == RPMA_E_NO_COMPLETION) {
 		/* lack of completion is not an error */
 		return 0;

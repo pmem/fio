@@ -583,72 +583,6 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 
 /* server side implementation */
 
-struct server_data {
-	struct rpma_peer *peer;
-
-	/* resources of an incoming connection */
-	struct rpma_conn *conn;
-
-	struct librpma_common_mem mem;
-};
-
-static int server_init(struct thread_data *td)
-{
-	struct librpma_common_server_options *o = td->eo;
-	struct server_data *sd;
-	struct ibv_context *dev = NULL;
-	int ret = 1;
-
-	/* configure logging thresholds to see more details */
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
-
-	/* allocate server's data */
-	sd = calloc(1, sizeof(struct server_data));
-	if (sd == NULL) {
-		td_verror(td, errno, "calloc");
-		return 1;
-	}
-
-	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->bindname,
-				RPMA_UTIL_IBV_CONTEXT_LOCAL,
-				&dev);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
-		goto err_free_sd;
-	}
-
-	/* create a new peer object */
-	ret = rpma_peer_new(dev, &sd->peer);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_peer_new");
-		goto err_free_sd;
-	}
-
-	td->io_ops_data = sd;
-
-	return 0;
-
-err_free_sd:
-	free(sd);
-
-	return 1;
-}
-
-static void server_cleanup(struct thread_data *td)
-{
-	struct server_data *sd =  td->io_ops_data;
-	int ret;
-
-	if (sd == NULL)
-		return;
-
-	/* free the peer */
-	if ((ret = rpma_peer_delete(&sd->peer)))
-		librpma_td_verror(td, ret, "rpma_peer_delete");
-}
-
 static char *server_allocate_dram(struct thread_data *td, size_t size,
 	struct librpma_common_mem *mem)
 {
@@ -669,7 +603,7 @@ static char *server_allocate_dram(struct thread_data *td, size_t size,
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
-	struct server_data *sd =  td->io_ops_data;
+	struct librpma_common_server_data *sd =  td->io_ops_data;
 	struct librpma_common_server_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_mr_local *mr;
@@ -797,7 +731,7 @@ err_ep_shutdown:
 
 static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	struct server_data *sd =  td->io_ops_data;
+	struct librpma_common_server_data *sd =  td->io_ops_data;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_mr_local *mr = FILE_ENG_DATA(f);
 	int ret;
@@ -841,12 +775,12 @@ static enum fio_q_status server_queue(struct thread_data *td,
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_server",
 	.version		= FIO_IOOPS_VERSION,
-	.init			= server_init,
+	.init			= librpma_common_server_init,
 	.open_file		= server_open_file,
 	.close_file		= server_close_file,
 	.queue			= server_queue,
 	.invalidate		= librpma_common_file_nop,
-	.cleanup		= server_cleanup,
+	.cleanup		= librpma_common_server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 				  FIO_NOSTATS,
 	.options		= librpma_common_fio_server_options,
