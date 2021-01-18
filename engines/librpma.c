@@ -417,25 +417,6 @@ static int client_getevents(struct thread_data *td, unsigned int min,
 	return cmpl_num_total;
 }
 
-static struct io_u *client_event(struct thread_data *td, int event)
-{
-	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct io_u *io_u;
-	int i;
-
-	/* get the first io_u from the queue */
-	io_u = ccd->io_us_completed[0];
-
-	/* remove the first io_u from the queue */
-	for (i = 1; i < ccd->io_u_completed_nr; ++i)
-		ccd->io_us_completed[i - 1] = ccd->io_us_completed[i];
-	ccd->io_u_completed_nr--;
-
-	dprint_io_u(io_u, "client_event");
-
-	return io_u;
-}
-
 FIO_STATIC struct ioengine_ops ioengine_client = {
 	.name			= "librpma_client",
 	.version		= FIO_IOOPS_VERSION,
@@ -446,7 +427,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.queue			= librpma_common_client_queue,
 	.commit			= client_commit,
 	.getevents		= client_getevents,
-	.event			= client_event,
+	.event			= librpma_common_client_event,
 	.errdetails		= librpma_common_client_errdetails,
 	.close_file		= librpma_common_file_nop,
 	.cleanup		= client_cleanup,
