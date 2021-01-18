@@ -14,10 +14,37 @@
  */
 
 #include "../fio.h"
+#include "../optgroup.h"
 
 #include "librpma_common.h"
 
 #include <libpmem.h>
+
+struct fio_option librpma_common_fio_client_options[] = {
+	{
+		.name	= "hostname",
+		.lname	= "rpma_client hostname",
+		.type	= FIO_OPT_STR_STORE,
+		.off1	= offsetof(struct librpma_common_client_options, hostname),
+		.help	= "IP address the server is listening on",
+		.def    = "",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= "port",
+		.lname	= "rpma_client port",
+		.type	= FIO_OPT_STR_STORE,
+		.off1	= offsetof(struct librpma_common_client_options, port),
+		.help	= "port the server is listening on",
+		.def    = "7204",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= NULL,
+	},
+};
 
 int librpma_common_td_port(const char *port_base_str,
 		struct thread_data *td, char *port_out)

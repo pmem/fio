@@ -49,6 +49,8 @@ struct librpma_common_client_options {
 	char *port;
 };
 
+extern struct fio_option librpma_common_fio_client_options[];
+
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
 
 int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
