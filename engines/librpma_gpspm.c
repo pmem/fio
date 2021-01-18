@@ -203,8 +203,7 @@ err_free_cd:
 static int client_post_init(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
-	size_t io_us_size;
+	struct client_data *cd = (struct client_data *)ccd;
 	unsigned int io_us_msgs_size;
 	int ret;
 
@@ -224,27 +223,7 @@ static int client_post_init(struct thread_data *td)
 		return ret;
 	}
 
-	/*
-	 * td->orig_buffer is not aligned. The engine requires aligned io_us
-	 * so FIO alignes up the address using the formula below.
-	 */
-	ccd->orig_buffer_aligned = PTR_ALIGN(td->orig_buffer, page_mask) +
-			td->o.mem_align;
-
-	/*
-	 * td->orig_buffer_size beside the space really consumed by io_us
-	 * has paddings which can be omitted for the memory registration.
-	 */
-	io_us_size = (unsigned long long)td_max_bs(td) *
-			(unsigned long long)td->o.iodepth;
-
-	if ((ret = rpma_mr_reg(ccd->peer, ccd->orig_buffer_aligned, io_us_size,
-			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
-			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
-			&ccd->orig_mr)))
-		librpma_td_verror(td, ret, "rpma_mr_reg");
-
-	return ret;
+	return librpma_common_client_post_init(td);
 }
 
 static void client_cleanup(struct thread_data *td)
