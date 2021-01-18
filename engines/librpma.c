@@ -300,7 +300,7 @@ static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int 
 	return 0;
 }
 
-static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int flags)
+static inline int client_io_write(struct thread_data *td, struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	size_t src_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
@@ -310,7 +310,7 @@ static inline int client_io_write(struct thread_data *td, struct io_u *io_u, int
 			ccd->server_mr, dst_offset,
 			ccd->orig_mr, src_offset,
 			io_u->xfer_buflen,
-			flags,
+			RPMA_F_COMPLETION_ON_ERROR,
 			(void *)(uintptr_t)io_u->index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_write");
@@ -355,7 +355,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			goto err;
 	} else if (io_u->ddir == DDIR_WRITE) {
 		/* post an RDMA write operation */
-		if ((ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR)))
+		if ((ret = client_io_write(td, io_u)))
 			goto err;
 		if ((ret = client_io_flush(td, io_u, io_u, io_u->xfer_buflen)))
 			goto err;
@@ -437,7 +437,7 @@ static int client_commit(struct thread_data *td)
 				return -1;
 		} else if (io_u->ddir == DDIR_WRITE) {
 			/* post an RDMA write operation */
-			ret = client_io_write(td, io_u, RPMA_F_COMPLETION_ON_ERROR);
+			ret = client_io_write(td, io_u);
 			if (ret)
 				return -1;
 
