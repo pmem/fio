@@ -321,3 +321,17 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 
 	return 0;
 }
+
+char *librpma_common_client_errdetails(struct io_u *io_u)
+{
+	/* get the string representation of an error */
+	enum ibv_wc_status status = io_u->error;
+	const char *status_str = ibv_wc_status_str(status);
+
+	/* allocate and copy the error string representation */
+	char *details = malloc(strlen(status_str) + 1);
+	strcpy(details, status_str);
+
+	/* FIO frees the returned string when it becomes obsolete */
+	return details;
+}
