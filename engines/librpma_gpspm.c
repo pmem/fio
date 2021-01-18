@@ -182,7 +182,7 @@ err_free_cd:
 static int client_post_init(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = (struct client_data *)ccd;
+	struct client_data *cd = ccd->client_data;
 	unsigned int io_us_msgs_size;
 	int ret;
 
