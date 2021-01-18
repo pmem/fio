@@ -764,3 +764,13 @@ void librpma_common_server_cleanup(struct thread_data *td)
 
 	free(csd);
 }
+
+int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f)
+{
+	return 0;
+}
+
+int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f)
+{
+	return 0;
+}
