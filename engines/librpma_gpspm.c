@@ -51,32 +51,6 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
 #define IO_U_NEXT_BUF_OFF_CLIENT(cd) \
     (IO_U_BUF_LEN * ((cd->msg_curr++) % cd->msg_num))
 
-static struct fio_option fio_client_options[] = {
-	{
-		.name	= "hostname",
-		.lname	= "rpma_client hostname",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_client_options, hostname),
-		.help	= "IP address the server is listening on",
-		.def    = "",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA_GPSPM,
-	},
-	{
-		.name	= "port",
-		.lname	= "rpma_client port",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_client_options, port),
-		.help	= "port the server is listening on",
-		.def    = "7204",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA_GPSPM,
-	},
-	{
-		.name	= NULL,
-	},
-};
-
 struct client_data {
 	/* memory for sending and receiving buffered */
 	char *io_us_msgs;
@@ -703,7 +677,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= fio_client_options,
+	.options		= librpma_common_fio_client_options,
 	.option_struct_size	= sizeof(struct librpma_common_client_options),
 };
 
