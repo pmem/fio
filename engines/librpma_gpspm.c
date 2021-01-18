@@ -709,42 +709,6 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 
 #define IO_U_BUFF_OFF_SERVER(i) (i * IO_U_BUF_LEN)
 
-struct server_options {
-	/*
-	 * FIO considers .off1 == 0 absent so the first meaningful field has to
-	 * have padding ahead of it.
-	 */
-	void *pad;
-	char *bindname;
-	char *port;
-};
-
-static struct fio_option fio_server_options[] = {
-	{
-		.name	= "bindname",
-		.lname	= "rpma_server bindname",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct server_options, bindname),
-		.help	= "IP address to listen on for incoming connections",
-		.def    = "",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA_GPSPM,
-	},
-	{
-		.name	= "port",
-		.lname	= "rpma_server port",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct server_options, port),
-		.help	= "port to listen on for incoming connections",
-		.def    = "7204",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA_GPSPM,
-	},
-	{
-		.name	= NULL,
-	},
-};
-
 struct server_data {
 	struct rpma_peer *peer;
 
@@ -770,7 +734,7 @@ struct server_data {
 
 static int server_init(struct thread_data *td)
 {
-	struct server_options *o = td->eo;
+	struct librpma_common_server_options *o = td->eo;
 	struct server_data *sd;
 	struct ibv_context *dev = NULL;
 	int ret = 1;
@@ -891,7 +855,7 @@ static void server_cleanup(struct thread_data *td)
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
 	struct server_data *sd =  td->io_ops_data;
-	struct server_options *o = td->eo;
+	struct librpma_common_server_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	size_t mem_size = td->o.size;
 	struct rpma_conn_private_data pdata;
@@ -1252,8 +1216,8 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.cleanup		= server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 				  FIO_NOSTATS,
-	.options		= fio_server_options,
-	.option_struct_size	= sizeof(struct server_options),
+	.options		= librpma_common_fio_server_options,
+	.option_struct_size	= sizeof(struct librpma_common_server_options),
 };
 
 /* register both engines */

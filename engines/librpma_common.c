@@ -321,3 +321,29 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 
 	return 0;
 }
+
+struct fio_option librpma_common_fio_server_options[] = {
+	{
+		.name	= "bindname",
+		.lname	= "rpma_server bindname",
+		.type	= FIO_OPT_STR_STORE,
+		.off1	= offsetof(struct librpma_common_server_options, bindname),
+		.help	= "IP address to listen on for incoming connections",
+		.def    = "",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= "port",
+		.lname	= "rpma_server port",
+		.type	= FIO_OPT_STR_STORE,
+		.off1	= offsetof(struct librpma_common_server_options, port),
+		.help	= "port to listen on for incoming connections",
+		.def    = "7204",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= NULL,
+	},
+};
