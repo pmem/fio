@@ -181,14 +181,7 @@ static int client_init(struct thread_data *td)
 	return 0;
 
 err_cleanup_common:
-	/* XXX to be replaced with librpma_common_client_cleanup */
-	(void) rpma_conn_disconnect(ccd->conn);
-	(void) rpma_conn_delete(&ccd->conn);
-	(void) rpma_peer_delete(&ccd->peer);
-	free(ccd->io_us_queued);
-	free(ccd->io_us_flight);
-	free(ccd->io_us_completed);
-	free(ccd);
+	librpma_common_client_cleanup(td);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
@@ -202,49 +195,10 @@ err_free_cd:
 static void client_cleanup(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	enum rpma_conn_event ev;
-	int ret;
 
-	if (ccd == NULL)
-		return;
-
-	/* delete the iou's memory registration */
-	if ((ret = rpma_mr_dereg(&ccd->orig_mr)))
-		librpma_td_verror(td, ret, "rpma_mr_dereg");
-
-	/* delete the iou's memory registration */
-	if ((ret = rpma_mr_remote_delete(&ccd->server_mr)))
-		librpma_td_verror(td, ret, "rpma_mr_remote_delete");
-
-	/* initiate disconnection */
-	if ((ret = rpma_conn_disconnect(ccd->conn)))
-		librpma_td_verror(td, ret, "rpma_conn_disconnect");
-
-	/* wait for disconnection to end up */
-	if ((ret = rpma_conn_next_event(ccd->conn, &ev))) {
-		librpma_td_verror(td, ret, "rpma_conn_next_event");
-	} else if (ev != RPMA_CONN_CLOSED) {
-		log_err(
-			"client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
-			rpma_utils_conn_event_2str(ev));
-	}
-
-	/* delete the connection */
-	if ((ret = rpma_conn_delete(&ccd->conn)))
-		librpma_td_verror(td, ret, "rpma_conn_delete");
-
-	/* delete the peer */
-	if ((ret = rpma_peer_delete(&ccd->peer)))
-		librpma_td_verror(td, ret, "rpma_peer_delete");
-
-	/* free the software queues */
-	free(ccd->io_us_queued);
-	free(ccd->io_us_flight);
-	free(ccd->io_us_completed);
-
-	/* free the client's data */
 	free(ccd->client_data);
-	free(ccd);
+
+	librpma_common_client_cleanup(td);
 }
 
 static inline int client_io_read(struct thread_data *td, struct io_u *io_u, int flags)
