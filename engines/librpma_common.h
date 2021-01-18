@@ -128,6 +128,8 @@ int librpma_common_client_post_init(struct thread_data *td);
 enum fio_q_status librpma_common_client_queue(struct thread_data *td,
 		struct io_u *io_u);
 
+struct io_u *librpma_common_client_event(struct thread_data *td, int event);
+
 char *librpma_common_client_errdetails(struct io_u *io_u);
 
 static inline int librpma_common_client_io_read(struct thread_data *td,
