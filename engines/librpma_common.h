@@ -107,4 +107,6 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 
 int librpma_common_client_post_init(struct thread_data *td);
 
+struct io_u *librpma_common_client_event(struct thread_data *td, int event);
+
 #endif /* LIBRPMA_COMMON_H */
