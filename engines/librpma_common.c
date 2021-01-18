@@ -430,6 +430,20 @@ enum fio_q_status librpma_common_client_queue(struct thread_data *td,
 	return FIO_Q_QUEUED;
 }
 
+char *librpma_common_client_errdetails(struct io_u *io_u)
+{
+	/* get the string representation of an error */
+	enum ibv_wc_status status = io_u->error;
+	const char *status_str = ibv_wc_status_str(status);
+
+	/* allocate and copy the error string representation */
+	char *details = malloc(strlen(status_str) + 1);
+	strcpy(details, status_str);
+
+	/* FIO frees the returned string when it becomes obsolete */
+	return details;
+}
+
 struct fio_option librpma_common_fio_server_options[] = {
 	{
 		.name	= "bindname",
