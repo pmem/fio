@@ -208,7 +208,6 @@ static void client_cleanup(struct thread_data *td)
 	size_t io_u_buf_off;
 	size_t send_offset;
 	void *send_ptr;
-	enum rpma_conn_event ev;
 	int ret;
 
 	if (cd == NULL)
