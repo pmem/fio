@@ -187,4 +187,20 @@ struct librpma_common_server_options {
 
 extern struct fio_option librpma_common_fio_server_options[];
 
+struct librpma_common_server_data {
+	struct rpma_peer *peer;
+
+	/* resources of an incoming connection */
+	struct rpma_conn *conn;
+
+	struct librpma_common_mem mem;
+
+	/* engine-specific server data */
+	void *server_data;
+};
+
+int librpma_common_server_init(struct thread_data *td);
+
+void librpma_common_server_cleanup(struct thread_data *td);
+
 #endif /* LIBRPMA_COMMON_H */
