@@ -17,6 +17,7 @@
 #define LIBRPMA_COMMON_H 1
 
 #include "../fio.h"
+#include "../optgroup.h"
 
 #include <librpma.h>
 
@@ -38,6 +39,8 @@ struct librpma_common_workspace {
 	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
 };
+
+/* clients' common */
 
 struct librpma_common_client_options {
 	/*
@@ -109,5 +112,19 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 		struct fio_file *f);
 
 int librpma_common_client_post_init(struct thread_data *td);
+
+/* servers' common */
+
+struct librpma_common_server_options {
+	/*
+	 * FIO considers .off1 == 0 absent so the first meaningful field has to
+	 * have padding ahead of it.
+	 */
+	void *pad;
+	char *bindname;
+	char *port;
+};
+
+extern struct fio_option librpma_common_fio_server_options[];
 
 #endif /* LIBRPMA_COMMON_H */
