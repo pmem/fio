@@ -21,6 +21,8 @@
 
 #include <librpma.h>
 
+/* servers' and clients' common */
+
 #define librpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
@@ -39,20 +41,6 @@ struct librpma_common_workspace {
 	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
 };
-
-/* clients' common */
-
-struct librpma_common_client_options {
-	/*
-	 * FIO considers .off1 == 0 absent so the first meaningful field has to
-	 * have padding ahead of it.
-	 */
-	void *pad;
-	char *hostname;
-	char *port;
-};
-
-extern struct fio_option librpma_common_fio_client_options[];
 
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
 
@@ -74,6 +62,22 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 	size_t size, struct librpma_common_mem *mem);
 
 void librpma_common_free(struct librpma_common_mem *mem);
+
+/* clients' common */
+
+struct librpma_common_client_options {
+	/*
+	 * FIO considers .off1 == 0 absent so the first meaningful field has to
+	 * have padding ahead of it.
+	 */
+	void *pad;
+	/* server ip */
+	char *server_ip;
+	/* base server listening port */
+	char *port;
+};
+
+extern struct fio_option librpma_common_fio_client_options[];
 
 typedef int (*librpma_common_flush_t)(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
@@ -189,7 +193,9 @@ struct librpma_common_server_options {
 	 * have padding ahead of it.
 	 */
 	void *pad;
-	char *bindname;
+	/* server ip */
+	char *server_ip;
+	/* base server listening port */
 	char *port;
 };
 
