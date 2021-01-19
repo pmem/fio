@@ -76,6 +76,12 @@ typedef int (*flush_t)(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len);
 
+/*
+ * RETURN VALUE
+ * - ( 1) - on success
+ * - ( 0) - skip
+ * - (-1) - on error
+ */
 typedef int (*get_io_u_index_t)(struct rpma_completion *cmpl,
 		unsigned int *io_u_index);
 

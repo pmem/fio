@@ -207,7 +207,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 {
 	memcpy(io_u_index, &cmpl->op_context, sizeof(unsigned int));
 
-	return 0;
+	return 1;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
