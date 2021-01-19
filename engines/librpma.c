@@ -52,7 +52,7 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* allocate client's data */
-	cd = calloc(1, sizeof(struct client_data));
+	cd = calloc(1, sizeof(*cd));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
 		return -1;
@@ -205,7 +205,7 @@ static inline int client_io_flush(struct thread_data *td,
 static int client_get_io_u_index(struct rpma_completion *cmpl,
 		unsigned int *io_u_index)
 {
-	memcpy(io_u_index, &cmpl->op_context, sizeof(unsigned int));
+	memcpy(io_u_index, &cmpl->op_context, sizeof(*io_u_index));
 
 	return 0;
 }

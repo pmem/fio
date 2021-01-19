@@ -161,7 +161,7 @@ int librpma_common_client_init(struct thread_data *td,
 	int ret;
 
 	/* allocate client's data */
-	ccd = calloc(1, sizeof(struct librpma_common_client_data));
+	ccd = calloc(1, sizeof(*ccd));
 	if (ccd == NULL) {
 		td_verror(td, errno, "calloc");
 		return -1;
@@ -172,20 +172,20 @@ int librpma_common_client_init(struct thread_data *td,
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
 
 	/* allocate all in-memory queues */
-	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(struct io_u *));
+	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(*ccd->io_us_queued));
 	if (ccd->io_us_queued == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_ccd;
 	}
 
-	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(struct io_u *));
+	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(*ccd->io_us_flight));
 	if (ccd->io_us_flight == NULL) {
 		td_verror(td, errno, "calloc");
 		free(ccd->io_us_queued);
 		goto err_free_ccd;
 	}
 
-	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(struct io_u *));
+	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(*ccd->io_us_completed));
 	if (ccd->io_us_completed == NULL) {
 		td_verror(td, errno, "calloc");
 		free(ccd->io_us_queued);
@@ -738,7 +738,7 @@ int librpma_common_server_init(struct thread_data *td)
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
 
 	/* allocate server's data */
-	csd = calloc(1, sizeof(struct librpma_common_server_data));
+	csd = calloc(1, sizeof(*csd));
 	if (csd == NULL) {
 		td_verror(td, errno, "calloc");
 		return -1;
@@ -866,7 +866,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	/* prepare a workspace description */
 	ws.mr_desc_size = mr_desc_size;
 	pdata->ptr = &ws;
-	pdata->len = sizeof(struct librpma_common_workspace);
+	pdata->len = sizeof(ws);
 
 	csd->ep = ep;
 	csd->ws_mr = mr;
