@@ -5,7 +5,7 @@
 
 [global]
 ioengine=librpma_gpspm_server
-serverip=[IP address to listen on]
+bindname=[IP address to listen on]
 port=[base port; ports <port; port + numjobs - 1> will be used]
 thread
 
