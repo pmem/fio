@@ -157,6 +157,12 @@ static int client_init(struct thread_data *td)
 		goto err_cleanup_common;
 	}
 
+	/*
+	 * Assure a single io_u buffer can store both SEND and RECV messages.
+	 * User-provided value is intentionally omitted.
+	 */
+	td->o.max_bs[DDIR_READ] = IO_U_BUF_LEN;
+
 	ccd->flush = client_io_flush;
 	ccd->get_io_u_index = client_get_io_u_index;
 	ccd->client_data = cd;
