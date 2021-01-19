@@ -67,6 +67,9 @@ struct librpma_common_mem {
 	size_t size_mmap;
 };
 
+char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
+	struct librpma_common_mem *mem);
+
 char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 	size_t size, struct librpma_common_mem *mem);
 
@@ -194,10 +197,12 @@ extern struct fio_option librpma_common_fio_server_options[];
 
 struct librpma_common_server_data {
 	struct rpma_peer *peer;
-
+	struct rpma_ep *ep;
 	/* resources of an incoming connection */
 	struct rpma_conn *conn;
 
+	char *ws_ptr;
+	struct rpma_mr_local *ws_mr;
 	struct librpma_common_mem mem;
 
 	/* engine-specific server data */
@@ -208,7 +213,11 @@ int librpma_common_server_init(struct thread_data *td);
 
 void librpma_common_server_cleanup(struct thread_data *td);
 
-int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f);
+int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
+				struct rpma_conn_private_data *pdata);
+
+void librpma_common_server_open_file_free(struct librpma_common_server_data *csd);
+
 int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f);
 
 #endif /* LIBRPMA_COMMON_H */
