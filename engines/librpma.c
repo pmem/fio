@@ -23,10 +23,6 @@
 
 /* client side implementation */
 
-struct client_data {
-	enum rpma_flush_type flush_type;
-};
-
 static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len);
@@ -37,24 +33,15 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 static int client_init(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd;
-	struct client_data *cd;
 	unsigned int sq_size;
 	uint32_t cq_size;
 	struct rpma_conn_cfg *cfg = NULL;
-	int remote_flush_type;
 	struct rpma_peer_cfg *pcfg = NULL;
 	int ret;
 
 	/* not supported readwrite = trim / randtrim / trimwrite */
 	if (td_trim(td)) {
 		log_err("Not supported mode.\n");
-		return 1;
-	}
-
-	/* allocate client's data */
-	cd = calloc(1, sizeof(struct client_data));
-	if (cd == NULL) {
-		td_verror(td, errno, "calloc");
 		return 1;
 	}
 
@@ -104,7 +91,7 @@ static int client_init(struct thread_data *td)
 	ret = rpma_conn_cfg_new(&cfg);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_free_cd;
+		return 1;
 	}
 
 	/* apply queue sizes */
@@ -124,16 +111,7 @@ static int client_init(struct thread_data *td)
 
 	ccd = td->io_ops_data;
 
-	/* get flush type of the remote node */
-	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr, &remote_flush_type))) {
-		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
-		goto err_cleanup_common;
-	}
-
-	cd->flush_type = (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
-		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
-
-	if (cd->flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
+	if (ccd->server_mr_flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
 		if (!ccd->ws->direct_write_to_pmem) {
 			log_err(
 					"Direct Write to PMEM not supported by the server (direct_write_to_pmem)\n"
@@ -170,7 +148,6 @@ static int client_init(struct thread_data *td)
 
 	ccd->flush = client_io_flush;
 	ccd->get_io_u_index = client_get_io_u_index;
-	ccd->client_data = cd;
 
 	return 0;
 
@@ -179,9 +156,6 @@ err_cleanup_common:
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
-
-err_free_cd:
-	free(cd);
 
 	return 1;
 }
@@ -200,11 +174,10 @@ static inline int client_io_flush(struct thread_data *td,
 		unsigned long long int len)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
 	size_t dst_offset = first_io_u->offset;
 
 	int ret = rpma_flush(ccd->conn, ccd->server_mr, dst_offset, len,
-		cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
+		ccd->server_mr_flush_type, RPMA_F_COMPLETION_ALWAYS,
 		(void *)(uintptr_t)last_io_u->index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_flush");

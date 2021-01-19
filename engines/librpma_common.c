@@ -141,6 +141,7 @@ int librpma_common_client_init(struct thread_data *td,
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	struct rpma_conn_private_data pdata;
+	int remote_flush_type;
 	int ret;
 
 	/* allocate client's data */
@@ -242,6 +243,15 @@ int librpma_common_client_init(struct thread_data *td,
 		librpma_td_verror(td, ret, "rpma_mr_remote_get_size");
 		goto err_conn_delete;
 	}
+
+	/* get flush type of the remote node */
+	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr, &remote_flush_type))) {
+		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
+		goto err_conn_delete;
+	}
+
+	ccd->server_mr_flush_type = (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
+			RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
 
 	td->io_ops_data = ccd;
 
