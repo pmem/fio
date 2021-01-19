@@ -48,14 +48,14 @@ static int client_init(struct thread_data *td)
 	/* not supported readwrite = trim / randtrim / trimwrite */
 	if (td_trim(td)) {
 		log_err("Not supported mode.\n");
-		return 1;
+		return -1;
 	}
 
 	/* allocate client's data */
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/*
@@ -171,7 +171,7 @@ err_cfg_delete:
 err_free_cd:
 	free(cd);
 
-	return 1;
+	return -1;
 }
 
 static void client_cleanup(struct thread_data *td)
@@ -239,10 +239,10 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	struct rpma_conn_private_data pdata;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
-	int ret = 1;
+	int ret = -1;
 
 	if ((ret = librpma_common_server_open_file(td, f, &pdata)))
-		return 1;
+		return -1;
 
 	/* receive an incoming connection request */
 	if ((ret = rpma_ep_next_conn_req(csd->ep, NULL, &conn_req)))
@@ -258,7 +258,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		librpma_td_verror(td, ret, "rpma_conn_next_event");
 	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
-		ret = 1;
+		ret = -1;
 	}
 	if (ret)
 		goto err_conn_delete;
@@ -279,7 +279,7 @@ err_req_delete:
 err_free_common:
 	librpma_common_server_open_file_free(csd);
 
-	return (ret != 0 ? ret : 1);
+	return (ret != 0 ? ret : -1);
 }
 
 static enum fio_q_status server_queue(struct thread_data *td,

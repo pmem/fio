@@ -79,14 +79,14 @@ static int client_init(struct thread_data *td)
 	/* not supported readwrite = trim / randtrim / trimwrite */
 	if (td_trim(td)) {
 		log_err("Not supported mode.\n");
-		return 1;
+		return -1;
 	}
 
 	/* allocate client's data */
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/*
@@ -172,7 +172,7 @@ err_cfg_delete:
 err_free_cd:
 	free(cd);
 
-	return 1;
+	return -1;
 }
 
 static int client_post_init(struct thread_data *td)
@@ -318,14 +318,14 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 	GPSPMFlushResponse *flush_resp;
 
 	if (cmpl->op != RPMA_OP_RECV)
-		return 1;
+		return -1;
 
 	/* unpack a response from the received buffer */
 	flush_resp = gpspm_flush_response__unpack(NULL,
 			cmpl->byte_len, cmpl->op_context);
 	if (flush_resp == NULL) {
 		log_err("Cannot unpack the flush response buffer\n");
-		return 1;
+		return -1;
 	}
 
 	memcpy(io_u_index, &flush_resp->op_context, sizeof(unsigned int));
@@ -377,7 +377,7 @@ static int server_init(struct thread_data *td)
 {
 	struct librpma_common_server_data *csd;
 	struct server_data *sd;
-	int ret = 1;
+	int ret = -1;
 
 	if ((ret = librpma_common_server_init(td)))
 		return ret;
@@ -408,7 +408,7 @@ err_free_sd:
 err_server_cleanup:
 	librpma_common_server_cleanup(td);
 
-	return 1;
+	return -1;
 }
 
 static int server_post_init(struct thread_data *td)
@@ -437,7 +437,7 @@ static int server_post_init(struct thread_data *td)
 	if (io_u_buflen < IO_U_BUF_LEN) {
 		log_err("blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
 				io_u_buflen, IO_U_BUF_LEN);
-		return 1;
+		return -1;
 	}
 
 	/*
@@ -452,7 +452,7 @@ static int server_post_init(struct thread_data *td)
 			&sd->msg_mr);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_mr_reg");
-		return 1;
+		return -1;
 	}
 
 	return 0;
@@ -496,7 +496,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	int i;
 
 	if ((ret = librpma_common_server_open_file(td, f, &pdata)))
-		return 1;
+		return -1;
 
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
@@ -583,7 +583,7 @@ err_cfg_delete:
 err_free_common:
 	librpma_common_server_open_file_free(csd);
 
-	return (ret != 0 ? ret : 1);
+	return (ret != 0 ? ret : -1);
 }
 
 static int server_qe_process(struct thread_data *td, struct rpma_completion *cmpl)
