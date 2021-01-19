@@ -409,7 +409,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			break;
 	} while (1);
 
-	if (ccd->get_io_u_index(&cmpl, &io_u_index))
+	if (ccd->get_io_u_index(&cmpl, &io_u_index) != 1)
 		goto err;
 
 	if (io_u->index != io_u_index) {
@@ -585,15 +585,11 @@ static int client_getevent_process(struct thread_data *td)
 		return -1;
 	}
 
-	if (cmpl.op != RPMA_OP_RECV) {
-		if (cmpl.op == RPMA_OP_SEND)
-			++ccd->op_send_completed;
+	if (cmpl.op == RPMA_OP_SEND)
+		++ccd->op_send_completed;
 
-		return 0;
-	}
-
-	if (ccd->get_io_u_index(&cmpl, &io_u_index))
-		return -1;
+	if ((ret = ccd->get_io_u_index(&cmpl, &io_u_index)) != 1)
+		return ret;
 
 	/* look for an io_u being completed */
 	for (i = 0; i < ccd->io_u_flight_nr; ++i) {
