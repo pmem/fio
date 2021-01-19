@@ -48,14 +48,14 @@ static int client_init(struct thread_data *td)
 	/* not supported readwrite = trim / randtrim / trimwrite */
 	if (td_trim(td)) {
 		log_err("Not supported mode.\n");
-		return 1;
+		return -1;
 	}
 
 	/* allocate client's data */
 	cd = calloc(1, sizeof(struct client_data));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/*
@@ -171,7 +171,7 @@ err_cfg_delete:
 err_free_cd:
 	free(cd);
 
-	return 1;
+	return -1;
 }
 
 static void client_cleanup(struct thread_data *td)
@@ -242,7 +242,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	int ret = 1;
 
 	if ((ret = librpma_common_server_open_file(td, f, &pdata)))
-		return 1;
+		return -1;
 
 	/* receive an incoming connection request */
 	if ((ret = rpma_ep_next_conn_req(csd->ep, NULL, &conn_req)))

@@ -164,7 +164,7 @@ int librpma_common_client_init(struct thread_data *td,
 	ccd = calloc(1, sizeof(struct librpma_common_client_data));
 	if (ccd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/* configure logging thresholds to see more details */
@@ -282,7 +282,7 @@ err_free_io_u_queues:
 err_free_ccd:
 	free(ccd);
 
-	return 1;
+	return -1;
 }
 
 void librpma_common_client_cleanup(struct thread_data *td)
@@ -741,7 +741,7 @@ int librpma_common_server_init(struct thread_data *td)
 	csd = calloc(1, sizeof(struct librpma_common_server_data));
 	if (csd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/* obtain an IBV context for a remote IP address */
@@ -767,7 +767,7 @@ int librpma_common_server_init(struct thread_data *td)
 err_free_csd:
 	free(csd);
 
-	return 1;
+	return -1;
 }
 
 void librpma_common_server_cleanup(struct thread_data *td)
@@ -802,23 +802,23 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 
 	if (!f->file_name) {
 		log_err("fio: filename is not set\n");
-		return 1;
+		return -1;
 	}
 
 	/* verify whether iodepth fits into uint16_t */
 	if (td->o.iodepth > UINT16_MAX) {
 		log_err("fio: iodepth too big (%u > %u)\n", td->o.iodepth, UINT16_MAX);
-		return 1;
+		return -1;
 	}
 
 	/* start a listening endpoint at addr:port */
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		return 1;
+		return -1;
 
 	ret = rpma_ep_listen(csd->peer, o->bindname, port_td, &ep);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_ep_listen");
-		return 1;
+		return -1;
 	}
 
 	if (strcmp(f->file_name, "malloc") == 0) {
