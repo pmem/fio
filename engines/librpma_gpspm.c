@@ -472,17 +472,16 @@ static void server_cleanup(struct thread_data *td)
 
 	sd = csd->server_data;
 
+	if (sd != NULL) {
+		/* rpma_mr_dereg(messaging buffer from DRAM) */
+		if ((ret = rpma_mr_dereg(&sd->msg_mr)))
+			librpma_td_verror(td, ret, "rpma_mr_dereg");
+
+		free(sd->msgs_queued);
+		free(sd);
+	}
+
 	librpma_common_server_cleanup(td);
-
-	if (sd == NULL)
-		return;
-
-	/* rpma_mr_dereg(messaging buffer from DRAM) */
-	if ((ret = rpma_mr_dereg(&sd->msg_mr)))
-		librpma_td_verror(td, ret, "rpma_mr_dereg");
-
-	free(sd->msgs_queued);
-	free(sd);
 }
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
