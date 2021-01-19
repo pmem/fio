@@ -112,7 +112,7 @@ ifdef CONFIG_LIBRPMA_GPSPM
   ENGINES += librpma_gpspm
 endif
 ifdef librpma_common_SRCS
-  ENGINES += librpma_common
+  SOURCE += $(librpma_common_SRCS)
 endif
 ifdef CONFIG_POSIXAIO
   SOURCE += engines/posixaio.c
