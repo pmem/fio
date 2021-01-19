@@ -134,6 +134,13 @@ static int client_init(struct thread_data *td)
 		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
 
 	if (cd->flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
+		if (!ccd->ws->direct_write_to_pmem) {
+			log_err(
+					"Direct Write to PMEM not supported by the server (direct_write_to_pmem)\n"
+					);
+			goto err_cleanup_common;
+		}
+
 		/* configure peer's direct write to pmem support */
 		ret = rpma_peer_cfg_new(&pcfg);
 		if (ret) {
@@ -154,6 +161,11 @@ static int client_init(struct thread_data *td)
 		}
 
 		(void) rpma_peer_cfg_delete(&pcfg);
+	} else {
+		log_info(
+				"Note: Direct Write to PMEM is not supported by default nor required if you are DRAM instead of a PMEM on the server side.\n"
+				"Remember flushing to DRAM does not make your data persistent and may be used only for experimental purposes.\n"
+				);
 	}
 
 	ccd->flush = client_io_flush;
