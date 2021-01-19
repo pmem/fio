@@ -110,6 +110,7 @@ struct librpma_common_client_data {
 
 	/* a server's memory representation */
 	struct rpma_mr_remote *server_mr;
+	enum rpma_flush_type server_mr_flush_type;
 
 	/* remote workspace description */
 	size_t ws_size;
