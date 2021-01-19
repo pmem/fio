@@ -180,8 +180,8 @@ static int client_post_init(struct thread_data *td)
 
 	/* message buffers initialization and registration */
 	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
-	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
-			page_size, io_us_msgs_size))) {
+	if ((ret = posix_memalign((void **)&cd->io_us_msgs, page_size,
+			io_us_msgs_size))) {
 		td_verror(td, ret, "posix_memalign");
 		return ret;
 	}
@@ -249,7 +249,7 @@ static void client_cleanup(struct thread_data *td)
 
 		/* send the flush message */
 		if ((ret = rpma_send(ccd->conn, cd->msg_mr, send_offset, flush_req_size,
-					RPMA_F_COMPLETION_ON_ERROR, NULL)))
+				RPMA_F_COMPLETION_ON_ERROR, NULL)))
 			librpma_td_verror(td, ret, "rpma_send");
 	}
 
@@ -292,8 +292,7 @@ static inline int client_io_flush(struct thread_data *td,
 	if (flush_req_size > MAX_MSG_SIZE) {
 		log_err(
 			"Packed flush request size is bigger than available send buffer space (%"
-			PRIu64 " > %d\n", flush_req_size,
-			MAX_MSG_SIZE);
+			PRIu64 " > %d\n", flush_req_size, MAX_MSG_SIZE);
 		return -1;
 	}
 	(void) gpspm_flush_request__pack(&flush_req, send_ptr);
@@ -431,9 +430,16 @@ static int server_post_init(struct thread_data *td)
 
 	/* check whether io_u buffer is big enough */
 	if (io_u_buflen < IO_U_BUF_LEN) {
+<<<<<<< HEAD
 		log_err("blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
 				io_u_buflen, IO_U_BUF_LEN);
 		return -1;
+=======
+		log_err(
+			"blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
+			io_u_buflen, IO_U_BUF_LEN);
+		return 1;
+>>>>>>> a0b47f7f... rpma: use all 80 characters of the line
 	}
 
 	/*
@@ -444,8 +450,7 @@ static int server_post_init(struct thread_data *td)
 			(unsigned long long)td->o.iodepth;
 
 	ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
-			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
-			&sd->msg_mr);
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV, &sd->msg_mr);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 		return -1;
@@ -484,6 +489,7 @@ static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn
 	int ret;
 	int i;
 
+<<<<<<< HEAD
 	/* prepare buffers for a flush requests */
 	sd->msg_sqe_available = td->o.iodepth;
 	for (i = 0; i < td->o.iodepth; i++) {
@@ -492,6 +498,18 @@ static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn
 				offset_recv_msg, MAX_MSG_SIZE,
 				(const void *)(uintptr_t)i)))
 			return ret;
+=======
+	if (!f->file_name) {
+		log_err("fio: filename is not set\n");
+		return 1;
+	}
+
+	/* verify whether iodepth fits into uint16_t */
+	if (td->o.iodepth > UINT16_MAX) {
+		log_err("fio: iodepth too big (%u > %u)\n",
+			td->o.iodepth, UINT16_MAX);
+		return 1;
+>>>>>>> a0b47f7f... rpma: use all 80 characters of the line
 	}
 
 	return 0;
@@ -597,8 +615,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	/* initiate the next receive operation */
-	ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset,
-			MAX_MSG_SIZE, (const void *)(uintptr_t)msg_index);
+	ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset, MAX_MSG_SIZE,
+			(const void *)(uintptr_t)msg_index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_recv");
 		goto err_terminate;
@@ -608,7 +626,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	flush_resp.op_context = flush_req->op_context;
 	flush_resp_size = gpspm_flush_response__get_packed_size(&flush_resp);
 	if (flush_resp_size > MAX_MSG_SIZE) {
-		log_err("Size of the packed flush response is bigger than the available space of the send buffer (%"
+		log_err(
+			"Size of the packed flush response is bigger than the available space of the send buffer (%"
 			PRIu64 " > %i\n", flush_resp_size, MAX_MSG_SIZE);
 		goto err_terminate;
 	}
@@ -691,8 +710,7 @@ err_terminate:
 	return -1;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					  struct io_u *io_u)
+static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 {
 	int ret;
 
