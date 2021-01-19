@@ -164,7 +164,7 @@ int librpma_common_client_init(struct thread_data *td,
 	ccd = calloc(1, sizeof(struct librpma_common_client_data));
 	if (ccd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/* configure logging thresholds to see more details */
@@ -282,7 +282,7 @@ err_free_io_u_queues:
 err_free_ccd:
 	free(ccd);
 
-	return 1;
+	return -1;
 }
 
 void librpma_common_client_cleanup(struct thread_data *td)
@@ -705,7 +705,7 @@ int librpma_common_server_init(struct thread_data *td)
 	struct librpma_common_options *o = td->eo;
 	struct librpma_common_server_data *csd;
 	struct ibv_context *dev = NULL;
-	int ret = 1;
+	int ret = -1;
 
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
@@ -715,7 +715,7 @@ int librpma_common_server_init(struct thread_data *td)
 	csd = calloc(1, sizeof(struct librpma_common_server_data));
 	if (csd == NULL) {
 		td_verror(td, errno, "calloc");
-		return 1;
+		return -1;
 	}
 
 	/* obtain an IBV context for a remote IP address */
@@ -741,7 +741,7 @@ int librpma_common_server_init(struct thread_data *td)
 err_free_csd:
 	free(csd);
 
-	return 1;
+	return -1;
 }
 
 void librpma_common_server_cleanup(struct thread_data *td)
@@ -780,17 +780,17 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 
 	if (!f->file_name) {
 		log_err("fio: filename is not set\n");
-		return 1;
+		return -1;
 	}
 
 	/* start a listening endpoint at addr:port */
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		return 1;
+		return -1;
 
 	ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_ep_listen");
-		return 1;
+		return -1;
 	}
 
 	if (strcmp(f->file_name, "malloc") == 0) {
@@ -901,22 +901,22 @@ int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f)
 	ret = rpma_conn_next_event(csd->conn, &conn_event);
 	if (!ret && conn_event != RPMA_CONN_CLOSED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
-		rv = 1;
+		rv = -1;
 	}
 
 	if ((ret = rpma_conn_disconnect(csd->conn))) {
 		librpma_td_verror(td, ret, "rpma_conn_disconnect");
-		rv = 1;
+		rv = -1;
 	}
 
 	if ((ret = rpma_conn_delete(&csd->conn))) {
 		librpma_td_verror(td, ret, "rpma_conn_delete");
-		rv = 1;
+		rv = -1;
 	}
 
 	if ((ret = rpma_mr_dereg(&csd->ws_mr))) {
 		librpma_td_verror(td, ret, "rpma_mr_dereg");
-		rv = 1;
+		rv = -1;
 	}
 
 	librpma_common_free(&csd->mem);
