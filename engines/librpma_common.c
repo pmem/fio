@@ -719,6 +719,16 @@ struct fio_option librpma_common_fio_server_options[] = {
 		.group	= FIO_OPT_G_LIBRPMA,
 	},
 	{
+		.name	= "direct_write_to_pmem",
+		.lname	= "rpma_direct_write_to_pmem",
+		.type	= FIO_OPT_BOOL,
+		.off1	= offsetof(struct librpma_common_server_options, direct_write_to_pmem),
+		.help	= "is direct write to PMEM possible",
+		.def	= "",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
 		.name	= NULL,
 	},
 };
