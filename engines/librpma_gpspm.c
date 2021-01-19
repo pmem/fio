@@ -312,27 +312,33 @@ static inline int client_io_flush(struct thread_data *td,
 	return 0;
 }
 
+/*
+ * RETURN VALUE
+ * - ( 1) - on success
+ * - ( 0) - skip
+ * - (-1) - on error
+ */
 static int client_get_io_u_index(struct rpma_completion *cmpl,
 		unsigned int *io_u_index)
 {
 	GPSPMFlushResponse *flush_resp;
 
 	if (cmpl->op != RPMA_OP_RECV)
-		return 1;
+		return 0;
 
 	/* unpack a response from the received buffer */
 	flush_resp = gpspm_flush_response__unpack(NULL,
 			cmpl->byte_len, cmpl->op_context);
 	if (flush_resp == NULL) {
 		log_err("Cannot unpack the flush response buffer\n");
-		return 1;
+		return -1;
 	}
 
 	memcpy(io_u_index, &flush_resp->op_context, sizeof(unsigned int));
 
 	gpspm_flush_response__free_unpacked(flush_resp, NULL);
 
-	return 0;
+	return 1;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
