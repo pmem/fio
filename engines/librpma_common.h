@@ -67,6 +67,9 @@ struct librpma_common_mem {
 	size_t size_mmap;
 };
 
+char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
+	struct librpma_common_mem *mem);
+
 char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 	size_t size, struct librpma_common_mem *mem);
 
@@ -180,6 +183,8 @@ static inline int librpma_common_client_io_write(struct thread_data *td,
 
 /* servers' common */
 
+typedef int (*prepare_connection_t)(struct thread_data *td, struct rpma_conn_req *conn_req);
+
 struct librpma_common_server_options {
 	/*
 	 * FIO considers .off1 == 0 absent so the first meaningful field has to
@@ -198,10 +203,14 @@ struct librpma_common_server_data {
 	/* resources of an incoming connection */
 	struct rpma_conn *conn;
 
+	char *ws_ptr;
+	struct rpma_mr_local *ws_mr;
 	struct librpma_common_mem mem;
 
 	/* engine-specific server data */
 	void *server_data;
+
+	prepare_connection_t prepare_connection;
 };
 
 int librpma_common_server_init(struct thread_data *td);
@@ -209,6 +218,7 @@ int librpma_common_server_init(struct thread_data *td);
 void librpma_common_server_cleanup(struct thread_data *td);
 
 int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f);
+
 int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f);
 
 #endif /* LIBRPMA_COMMON_H */
