@@ -40,20 +40,6 @@ struct librpma_common_workspace {
 	char descriptors[DESCRIPTORS_MAX_SIZE];
 };
 
-/* clients' common */
-
-struct librpma_common_client_options {
-	/*
-	 * FIO considers .off1 == 0 absent so the first meaningful field has to
-	 * have padding ahead of it.
-	 */
-	void *pad;
-	char *hostname;
-	char *port;
-};
-
-extern struct fio_option librpma_common_fio_client_options[];
-
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
 
 int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
@@ -180,17 +166,6 @@ static inline int librpma_common_client_io_write(struct thread_data *td,
 
 /* servers' common */
 
-struct librpma_common_server_options {
-	/*
-	 * FIO considers .off1 == 0 absent so the first meaningful field has to
-	 * have padding ahead of it.
-	 */
-	void *pad;
-	char *bindname;
-	char *port;
-};
-
-extern struct fio_option librpma_common_fio_server_options[];
 
 struct librpma_common_server_data {
 	struct rpma_peer *peer;
@@ -210,5 +185,19 @@ void librpma_common_server_cleanup(struct thread_data *td);
 
 int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f);
 int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f);
+
+/* servers' and clients' common */
+
+struct librpma_common_options {
+	/*
+	 * FIO considers .off1 == 0 absent so the first meaningful field has to
+	 * have padding ahead of it.
+	 */
+	void *pad;
+	char *server_ip;
+	char *port;
+};
+
+extern struct fio_option librpma_common_fio_options[];
 
 #endif /* LIBRPMA_COMMON_H */

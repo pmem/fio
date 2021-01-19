@@ -351,8 +351,8 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= librpma_common_fio_client_options,
-	.option_struct_size	= sizeof(struct librpma_common_client_options),
+	.options		= librpma_common_fio_options,
+	.option_struct_size	= sizeof(struct librpma_common_options),
 };
 
 /* server side implementation */
@@ -488,7 +488,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
 	struct librpma_common_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
-	struct librpma_common_server_options *o = td->eo;
+	struct librpma_common_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	size_t mem_size = td->o.size;
 	struct rpma_conn_private_data pdata;
@@ -520,7 +520,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		return 1;
 
-	ret = rpma_ep_listen(csd->peer, o->bindname, port_td, &ep);
+	ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_ep_listen");
 		return 1;
@@ -853,8 +853,8 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.cleanup		= server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 				  FIO_NOSTATS,
-	.options		= librpma_common_fio_server_options,
-	.option_struct_size	= sizeof(struct librpma_common_server_options),
+	.options		= librpma_common_fio_options,
+	.option_struct_size	= sizeof(struct librpma_common_options),
 };
 
 /* register both engines */
