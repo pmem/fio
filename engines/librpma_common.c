@@ -672,9 +672,12 @@ char *librpma_common_client_errdetails(struct io_u *io_u)
 	enum ibv_wc_status status = io_u->error;
 	const char *status_str = ibv_wc_status_str(status);
 
-	/* allocate and copy the error string representation */
-	char *details = malloc(strlen(status_str) + 1);
-	strcpy(details, status_str);
+	char *details = strdup(status_str);
+	if (details == NULL) {
+		fprintf(stderr, "Error: %s\n", status_str);
+		fprintf(stderr, "Fatal error: out of memory. Aborting.\n");
+		abort();
+	}
 
 	/* FIO frees the returned string when it becomes obsolete */
 	return details;
