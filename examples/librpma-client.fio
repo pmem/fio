@@ -5,7 +5,7 @@
 
 [global]
 ioengine=librpma_client
-serverip=[IP address the server is listening on] 
+hostname=[IP address the server is listening on] 
 port=[port the server is listening on]
 thread
 

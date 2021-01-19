@@ -222,8 +222,8 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= librpma_common_fio_options,
-	.option_struct_size	= sizeof(struct librpma_common_options),
+	.options		= librpma_common_fio_client_options,
+	.option_struct_size	= sizeof(struct librpma_common_client_options),
 };
 
 /* server side implementation */
@@ -250,8 +250,8 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.cleanup		= librpma_common_server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 				  FIO_NOSTATS,
-	.options		= librpma_common_fio_options,
-	.option_struct_size	= sizeof(struct librpma_common_options),
+	.options		= librpma_common_fio_server_options,
+	.option_struct_size	= sizeof(struct librpma_common_server_options),
 };
 
 /* register both engines */
