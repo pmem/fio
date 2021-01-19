@@ -276,7 +276,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		return 1;
 
-	ret = rpma_ep_listen(sd->peer, o->bindname, port_td, &ep);
+	ret = rpma_ep_listen(sd->peer, o->server_ip, port_td, &ep);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_ep_listen");
 		return 1;
