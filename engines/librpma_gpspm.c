@@ -147,8 +147,7 @@ static int client_init(struct thread_data *td)
 
 	/* validate the server's RQ capacity */
 	if (cd->msg_num > ccd->ws->max_msg_num) {
-		log_err(
-			"server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
+		log_err("server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
 			ccd->ws->max_msg_num, cd->msg_num);
 		goto err_cleanup_common;
 	}
@@ -180,8 +179,8 @@ static int client_post_init(struct thread_data *td)
 
 	/* message buffers initialization and registration */
 	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
-	if ((ret = posix_memalign((void **)&cd->io_us_msgs,
-			page_size, io_us_msgs_size))) {
+	if ((ret = posix_memalign((void **)&cd->io_us_msgs, page_size,
+			io_us_msgs_size))) {
 		td_verror(td, ret, "posix_memalign");
 		return ret;
 	}
@@ -238,8 +237,7 @@ static void client_cleanup(struct thread_data *td)
 	/* prepare the last flush message and pack it to the send buffer */
 	flush_req_size = gpspm_flush_request__get_packed_size(&Flush_req_last);
 	if (flush_req_size > MAX_MSG_SIZE) {
-		log_err(
-			"Packed flush request size is bigger than available send buffer space (%zu > %d\n",
+		log_err("Packed flush request size is bigger than available send buffer space (%zu > %d\n",
 			flush_req_size, MAX_MSG_SIZE);
 	} else {
 		io_u_buf_off = IO_U_NEXT_BUF_OFF_CLIENT(cd);
@@ -249,7 +247,7 @@ static void client_cleanup(struct thread_data *td)
 
 		/* send the flush message */
 		if ((ret = rpma_send(ccd->conn, cd->msg_mr, send_offset, flush_req_size,
-					RPMA_F_COMPLETION_ON_ERROR, NULL)))
+				RPMA_F_COMPLETION_ON_ERROR, NULL)))
 			librpma_td_verror(td, ret, "rpma_send");
 	}
 
@@ -290,8 +288,7 @@ static inline int client_io_flush(struct thread_data *td,
 	flush_req.op_context = last_io_u->index;
 	flush_req_size = gpspm_flush_request__get_packed_size(&flush_req);
 	if (flush_req_size > MAX_MSG_SIZE) {
-		log_err(
-			"Packed flush request size is bigger than available send buffer space (%"
+		log_err("Packed flush request size is bigger than available send buffer space (%"
 			PRIu64 " > %d\n", flush_req_size,
 			MAX_MSG_SIZE);
 		return -1;
@@ -435,7 +432,7 @@ static int server_post_init(struct thread_data *td)
 	/* check whether io_u buffer is big enough */
 	if (io_u_buflen < IO_U_BUF_LEN) {
 		log_err("blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
-				io_u_buflen, IO_U_BUF_LEN);
+			io_u_buflen, IO_U_BUF_LEN);
 		return 1;
 	}
 
@@ -447,8 +444,7 @@ static int server_post_init(struct thread_data *td)
 			(unsigned long long)td->o.iodepth;
 
 	ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
-			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
-			&sd->msg_mr);
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV, &sd->msg_mr);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 		return 1;
@@ -726,8 +722,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	/* initiate the next receive operation */
-	ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset,
-			MAX_MSG_SIZE, (const void *)(uintptr_t)msg_index);
+	ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset, MAX_MSG_SIZE,
+			(const void *)(uintptr_t)msg_index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_recv");
 		goto err_terminate;
@@ -820,8 +816,7 @@ err_terminate:
 	return -1;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					  struct io_u *io_u)
+static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 {
 	int ret;
 

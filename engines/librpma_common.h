@@ -60,7 +60,7 @@ struct librpma_common_workspace {
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
 
 int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
-	char *port_out);
+		char *port_out);
 
 struct librpma_common_mem {
 	/* memory buffer */
@@ -71,7 +71,7 @@ struct librpma_common_mem {
 };
 
 char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
-	size_t size, struct librpma_common_mem *mem);
+		size_t size, struct librpma_common_mem *mem);
 
 void librpma_common_free(struct librpma_common_mem *mem);
 
@@ -148,12 +148,9 @@ static inline int librpma_common_client_io_read(struct thread_data *td,
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	size_t dst_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
 	size_t src_offset = io_u->offset;
-	int ret = rpma_read(ccd->conn,
-			ccd->orig_mr, dst_offset,
-			ccd->server_mr, src_offset,
-			io_u->xfer_buflen,
-			flags,
-			(void *)(uintptr_t)io_u->index);
+	int ret = rpma_read(ccd->conn, ccd->orig_mr, dst_offset,
+			ccd->server_mr, src_offset, io_u->xfer_buflen,
+			flags, (void *)(uintptr_t)io_u->index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_read");
 		return -1;
@@ -169,10 +166,8 @@ static inline int librpma_common_client_io_write(struct thread_data *td,
 	size_t src_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
 	size_t dst_offset = io_u->offset;
 
-	int ret = rpma_write(ccd->conn,
-			ccd->server_mr, dst_offset,
-			ccd->orig_mr, src_offset,
-			io_u->xfer_buflen,
+	int ret = rpma_write(ccd->conn, ccd->server_mr, dst_offset,
+			ccd->orig_mr, src_offset, io_u->xfer_buflen,
 			RPMA_F_COMPLETION_ON_ERROR,
 			(void *)(uintptr_t)io_u->index);
 	if (ret) {

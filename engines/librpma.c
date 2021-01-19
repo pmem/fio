@@ -229,7 +229,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 /* server side implementation */
 
 static char *server_allocate_dram(struct thread_data *td, size_t size,
-	struct librpma_common_mem *mem)
+		struct librpma_common_mem *mem)
 {
 	char *mem_ptr = NULL;
 	int ret;
@@ -411,8 +411,7 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 	return ret;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					struct io_u *io_u)
+static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 {
 	return FIO_Q_COMPLETED;
 }
