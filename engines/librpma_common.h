@@ -147,8 +147,7 @@ static inline int librpma_common_client_io_read(struct thread_data *td,
 			ccd->orig_mr, dst_offset,
 			ccd->server_mr, src_offset,
 			io_u->xfer_buflen,
-			flags,
-			(void *)(uintptr_t)io_u->index);
+			flags, (void *)(uintptr_t)io_u->index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_read");
 		return -1;
@@ -167,8 +166,7 @@ static inline int librpma_common_client_io_write(struct thread_data *td,
 	int ret = rpma_write(ccd->conn,
 			ccd->server_mr, dst_offset,
 			ccd->orig_mr, src_offset,
-			io_u->xfer_buflen,
-			RPMA_F_COMPLETION_ON_ERROR,
+			io_u->xfer_buflen, RPMA_F_COMPLETION_ON_ERROR,
 			(void *)(uintptr_t)io_u->index);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_write");

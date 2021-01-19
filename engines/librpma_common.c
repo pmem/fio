@@ -46,8 +46,8 @@ struct fio_option librpma_common_fio_client_options[] = {
 	},
 };
 
-int librpma_common_td_port(const char *port_base_str,
-		struct thread_data *td, char *port_out)
+int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
+	char *port_out)
 {
 	unsigned long int port_ul = strtoul(port_base_str, NULL, 10);
 	unsigned int port_new;
@@ -104,8 +104,7 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 
 	/* check size of allocated persistent memory */
 	if (size_mmap < ws_offset + size) {
-		log_err(
-			"fio: %s is too small to handle so many threads (%zu < %zu)\n",
+		log_err("fio: %s is too small to handle so many threads (%zu < %zu)\n",
 			filename, size_mmap, ws_offset + size);
 		goto err_unmap;
 	}
@@ -131,8 +130,7 @@ void librpma_common_free(struct librpma_common_mem *mem)
 		free(mem->mem_ptr);
 }
 
-int librpma_common_client_init(struct thread_data *td,
-		struct rpma_conn_cfg *cfg)
+int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg)
 {
 	struct librpma_common_client_data *ccd;
 	struct librpma_common_client_options *o = td->eo;
@@ -178,8 +176,7 @@ int librpma_common_client_init(struct thread_data *td,
 
 	/* obtain an IBV context for a remote IP address */
 	ret = rpma_utils_get_ibv_context(o->hostname,
-				RPMA_UTIL_IBV_CONTEXT_REMOTE,
-				&dev);
+			RPMA_UTIL_IBV_CONTEXT_REMOTE, &dev);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_io_u_queues;
@@ -219,8 +216,7 @@ int librpma_common_client_init(struct thread_data *td,
 	if (ret) {
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
+		log_err("rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
 			rpma_utils_conn_event_2str(event));
 		goto err_conn_delete;
 	}
@@ -286,8 +282,7 @@ void librpma_common_client_cleanup(struct thread_data *td)
 	if ((ret = rpma_conn_next_event(ccd->conn, &ev))) {
 		librpma_td_verror(td, ret, "rpma_conn_next_event");
 	} else if (ev != RPMA_CONN_CLOSED) {
-		log_err(
-			"client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
+		log_err("client_cleanup received an unexpected event (%s != RPMA_CONN_CLOSED)\n",
 			rpma_utils_conn_event_2str(ev));
 	}
 	/* delete the connection */
@@ -350,7 +345,7 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 }
 
 static enum fio_q_status client_queue_sync(struct thread_data *td,
-					  struct io_u *io_u)
+		struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
@@ -399,8 +394,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 		goto err;
 
 	if (io_u->index != io_u_index) {
-		log_err(
-			"no matching io_u for received completion found (io_u_index=%u)\n",
+		log_err("no matching io_u for received completion found (io_u_index=%u)\n",
 			io_u_index);
 		goto err;
 	}
@@ -591,8 +585,7 @@ static int client_getevent_process(struct thread_data *td)
 
 	/* if no matching io_u has been found */
 	if (cmpl_num == 0) {
-		log_err(
-			"no matching io_u for received completion found (io_u_index=%u)\n",
+		log_err("no matching io_u for received completion found (io_u_index=%u)\n",
 			io_u_index);
 		return -1;
 	}
@@ -729,8 +722,7 @@ int librpma_common_server_init(struct thread_data *td)
 
 	/* obtain an IBV context for a remote IP address */
 	ret = rpma_utils_get_ibv_context(o->bindname,
-				RPMA_UTIL_IBV_CONTEXT_LOCAL,
-				&dev);
+			RPMA_UTIL_IBV_CONTEXT_LOCAL, &dev);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_csd;

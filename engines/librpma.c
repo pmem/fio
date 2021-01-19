@@ -415,8 +415,7 @@ static int server_close_file(struct thread_data *td, struct fio_file *f)
 	return ret;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					struct io_u *io_u)
+static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 {
 	return FIO_Q_COMPLETED;
 }
