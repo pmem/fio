@@ -20,12 +20,12 @@
 
 #include <libpmem.h>
 
-struct fio_option librpma_common_fio_client_options[] = {
+struct fio_option librpma_common_fio_options[] = {
 	{
-		.name	= "hostname",
-		.lname	= "rpma_client hostname",
+		.name	= "serverip",
+		.lname	= "rpma_server_ip",
 		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_client_options, hostname),
+		.off1	= offsetof(struct librpma_common_options, server_ip),
 		.help	= "IP address the server is listening on",
 		.def    = "",
 		.category = FIO_OPT_C_ENGINE,
@@ -33,9 +33,9 @@ struct fio_option librpma_common_fio_client_options[] = {
 	},
 	{
 		.name	= "port",
-		.lname	= "rpma_client port",
+		.lname	= "rpma_server port",
 		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_client_options, port),
+		.off1	= offsetof(struct librpma_common_options, port),
 		.help	= "port the server is listening on",
 		.def    = "7204",
 		.category = FIO_OPT_C_ENGINE,
@@ -135,7 +135,7 @@ int librpma_common_client_init(struct thread_data *td,
 		struct rpma_conn_cfg *cfg)
 {
 	struct librpma_common_client_data *ccd;
-	struct librpma_common_client_options *o = td->eo;
+	struct librpma_common_options *o = td->eo;
 	struct ibv_context *dev = NULL;
 	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
 	struct rpma_conn_req *req = NULL;
@@ -177,7 +177,7 @@ int librpma_common_client_init(struct thread_data *td,
 	}
 
 	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->hostname,
+	ret = rpma_utils_get_ibv_context(o->server_ip,
 				RPMA_UTIL_IBV_CONTEXT_REMOTE,
 				&dev);
 	if (ret) {
@@ -195,7 +195,7 @@ int librpma_common_client_init(struct thread_data *td,
 	/* create a connection request */
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		goto err_peer_delete;
-	ret = rpma_conn_req_new(ccd->peer, o->hostname, port_td, cfg, &req);
+	ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td, cfg, &req);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
@@ -683,35 +683,9 @@ char *librpma_common_client_errdetails(struct io_u *io_u)
 	return details;
 }
 
-struct fio_option librpma_common_fio_server_options[] = {
-	{
-		.name	= "bindname",
-		.lname	= "rpma_server bindname",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_server_options, bindname),
-		.help	= "IP address to listen on for incoming connections",
-		.def    = "",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA,
-	},
-	{
-		.name	= "port",
-		.lname	= "rpma_server port",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_server_options, port),
-		.help	= "port to listen on for incoming connections",
-		.def    = "7204",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA,
-	},
-	{
-		.name	= NULL,
-	},
-};
-
 int librpma_common_server_init(struct thread_data *td)
 {
-	struct librpma_common_server_options *o = td->eo;
+	struct librpma_common_options *o = td->eo;
 	struct librpma_common_server_data *csd;
 	struct ibv_context *dev = NULL;
 	int ret = 1;
@@ -728,7 +702,7 @@ int librpma_common_server_init(struct thread_data *td)
 	}
 
 	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->bindname,
+	ret = rpma_utils_get_ibv_context(o->server_ip,
 				RPMA_UTIL_IBV_CONTEXT_LOCAL,
 				&dev);
 	if (ret) {
