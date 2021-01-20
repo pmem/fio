@@ -155,6 +155,7 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	struct rpma_conn_private_data pdata;
+	enum rpma_log_level log_level_aux;
 	int ret;
 
 	/* allocate client's data */
@@ -164,9 +165,16 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 		return -1;
 	}
 
+	/* --debug=net sets RPMA_LOG_THRESHOLD_AUX to RPMA_LOG_LEVEL_INFO */
+	log_level_aux = RPMA_LOG_LEVEL_WARNING;
+#ifdef FIO_INC_DEBUG
+	if ((1UL << FD_NET) & fio_debug)
+		log_level_aux = RPMA_LOG_LEVEL_INFO;
+#endif
+
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
-	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, RPMA_LOG_LEVEL_INFO);
+	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, log_level_aux);
 
 	/* allocate all in-memory queues */
 	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(*ccd->io_us_queued));
