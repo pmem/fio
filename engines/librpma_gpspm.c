@@ -110,8 +110,7 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* create a connection configuration object */
-	ret = rpma_conn_cfg_new(&cfg);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_new(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
 		goto err_free_cd;
 	}
@@ -125,18 +124,15 @@ static int client_init(struct thread_data *td)
 	 * - the completion queue (CQ) has to be big enough to accommodate all
 	 *   success and error completions (sq_size + rq_size)
 	 */
-	ret = rpma_conn_cfg_set_sq_size(cfg, write_num + cd->msg_num);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_sq_size(cfg, write_num + cd->msg_num))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_rq_size(cfg, cd->msg_num);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_rq_size(cfg, cd->msg_num))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, write_num + cd->msg_num * 2);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_cq_size(cfg, write_num + cd->msg_num * 2))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
@@ -297,11 +293,11 @@ static inline int client_io_flush(struct thread_data *td,
 	void *recv_ptr = cd->io_us_msgs + recv_offset;
 	GPSPMFlushRequest flush_req = GPSPM_FLUSH_REQUEST__INIT;
 	size_t flush_req_size = 0;
+	int ret;
 
 	/* prepare a response buffer */
-	int ret = rpma_recv(ccd->conn, cd->msg_mr, recv_offset, MAX_MSG_SIZE,
-			recv_ptr);
-	if (ret) {
+	if ((ret = rpma_recv(ccd->conn, cd->msg_mr, recv_offset, MAX_MSG_SIZE,
+			recv_ptr))) {
 		librpma_td_verror(td, ret, "rpma_recv");
 		return -1;
 	}
@@ -471,9 +467,8 @@ static int server_post_init(struct thread_data *td)
 	io_us_size = (unsigned long long)io_u_buflen *
 			(unsigned long long)td->o.iodepth;
 
-	ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
-			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV, &sd->msg_mr);
-	if (ret) {
+	if ((ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV, &sd->msg_mr))) {
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 		return -1;
 	}
@@ -534,8 +529,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	csd->prepare_connection = prepare_connection;
 
 	/* create a connection configuration object */
-	ret = rpma_conn_cfg_new(&cfg);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_new(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
 		return -1;
 	}
@@ -549,18 +543,15 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	 * - the completion queue (CQ) has to be big enough to accommodate all
 	 *   success and error completions (sq_size + rq_size)
 	 */
-	ret = rpma_conn_cfg_set_sq_size(cfg, max_msg_num);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_sq_size(cfg, max_msg_num))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_rq_size(cfg, max_msg_num);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_rq_size(cfg, max_msg_num))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, max_msg_num * 2);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_cq_size(cfg, max_msg_num * 2))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
@@ -616,9 +607,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	/* initiate the next receive operation */
-	ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset, MAX_MSG_SIZE,
-			(const void *)(uintptr_t)msg_index);
-	if (ret) {
+	if ((ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset, MAX_MSG_SIZE,
+			(const void *)(uintptr_t)msg_index))) {
 		librpma_td_verror(td, ret, "rpma_recv");
 		goto err_terminate;
 	}

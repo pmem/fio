@@ -97,20 +97,17 @@ static int client_init(struct thread_data *td)
 	cq_size = sq_size;
 
 	/* create a connection configuration object */
-	ret = rpma_conn_cfg_new(&cfg);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_new(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
 		goto err_free_cd;
 	}
 
 	/* apply queue sizes */
-	ret = rpma_conn_cfg_set_sq_size(cfg, sq_size);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_sq_size(cfg, sq_size))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, cq_size);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_set_cq_size(cfg, cq_size))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
@@ -137,20 +134,17 @@ static int client_init(struct thread_data *td)
 		}
 
 		/* configure peer's direct write to pmem support */
-		ret = rpma_peer_cfg_new(&pcfg);
-		if (ret) {
+		if ((ret = rpma_peer_cfg_new(&pcfg))) {
 			librpma_td_verror(td, ret, "rpma_peer_cfg_new");
 			goto err_cleanup_common;
 		}
 
-		ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true);
-		if (ret) {
+		if ((ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true))) {
 			librpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
 			goto err_cleanup_common;
 		}
 
-		ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg);
-		if (ret) {
+		if ((ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg))) {
 			librpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
 			goto err_cleanup_common;
 		}
@@ -202,11 +196,11 @@ static inline int client_io_flush(struct thread_data *td,
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct client_data *cd = ccd->client_data;
 	size_t dst_offset = first_io_u->offset;
+	int ret;
 
-	int ret = rpma_flush(ccd->conn, ccd->server_mr, dst_offset, len,
-		cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
-		(void *)(uintptr_t)last_io_u->index);
-	if (ret) {
+	if ((ret = rpma_flush(ccd->conn, ccd->server_mr, dst_offset, len,
+			cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
+			(void *)(uintptr_t)last_io_u->index))) {
 		librpma_td_verror(td, ret, "rpma_flush");
 		return -1;
 	}

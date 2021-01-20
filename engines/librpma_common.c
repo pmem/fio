@@ -205,16 +205,14 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	}
 
 	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->server_ip,
-			RPMA_UTIL_IBV_CONTEXT_REMOTE, &dev);
-	if (ret) {
+	if ((ret = rpma_utils_get_ibv_context(o->server_ip,
+			RPMA_UTIL_IBV_CONTEXT_REMOTE, &dev))) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_io_u_queues;
 	}
 
 	/* create a new peer object */
-	ret = rpma_peer_new(dev, &ccd->peer);
-	if (ret) {
+	if ((ret = rpma_peer_new(dev, &ccd->peer))) {
 		librpma_td_verror(td, ret, "rpma_peer_new");
 		goto err_free_io_u_queues;
 	}
@@ -222,22 +220,19 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	/* create a connection request */
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		goto err_peer_delete;
-	ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td, cfg, &req);
-	if (ret) {
+	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td, cfg, &req))) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
 	}
 
 	/* connect the connection request and obtain the connection object */
-	ret = rpma_conn_req_connect(&req, NULL, &ccd->conn);
-	if (ret) {
+	if ((ret = rpma_conn_req_connect(&req, NULL, &ccd->conn))) {
 		librpma_td_verror(td, ret, "rpma_conn_req_connect");
 		goto err_req_delete;
 	}
 
 	/* wait for the connection to establish */
-	ret = rpma_conn_next_event(ccd->conn, &event);
-	if (ret) {
+	if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
 		log_err(
@@ -476,8 +471,7 @@ int librpma_common_client_commit(struct thread_data *td)
 				return -1;
 		} else if (io_u->ddir == DDIR_WRITE) {
 			/* post an RDMA write operation */
-			ret = librpma_common_client_io_write(td, io_u);
-			if (ret)
+			if ((ret = librpma_common_client_io_write(td, io_u)))
 				return -1;
 
 			/* cache the first io_u in the sequence */
@@ -508,8 +502,7 @@ int librpma_common_client_commit(struct thread_data *td)
 			}
 
 			/* flush all writes which build a continuous sequence */
-			ret = ccd->flush(td, flush_first_io_u, io_u, flush_len);
-			if (ret)
+			if ((ret = ccd->flush(td, flush_first_io_u, io_u, flush_len)))
 				return -1;
 
 			/*
@@ -726,16 +719,14 @@ int librpma_common_server_init(struct thread_data *td)
 	}
 
 	/* obtain an IBV context for a remote IP address */
-	ret = rpma_utils_get_ibv_context(o->server_ip,
-			RPMA_UTIL_IBV_CONTEXT_LOCAL, &dev);
-	if (ret) {
+	if ((ret = rpma_utils_get_ibv_context(o->server_ip,
+			RPMA_UTIL_IBV_CONTEXT_LOCAL, &dev))) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_csd;
 	}
 
 	/* create a new peer object */
-	ret = rpma_peer_new(dev, &csd->peer);
-	if (ret) {
+	if ((ret = rpma_peer_new(dev, &csd->peer))) {
 		librpma_td_verror(td, ret, "rpma_peer_new");
 		goto err_free_csd;
 	}
@@ -794,8 +785,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	if ((ret = librpma_common_td_port(o->port, td, port_td)))
 		return -1;
 
-	ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep);
-	if (ret) {
+	if ((ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep))) {
 		librpma_td_verror(td, ret, "rpma_ep_listen");
 		return -1;
 	}
@@ -816,19 +806,16 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 
 	f->real_file_size = mem_size;
 
-	ret = rpma_mr_reg(csd->peer, ws_ptr, mem_size,
+	if ((ret = rpma_mr_reg(csd->peer, ws_ptr, mem_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
-			usage_mem_type,
-			&mr);
-	if (ret) {
+			usage_mem_type, &mr))) {
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 		goto err_free;
 	}
 
 	/* get size of the memory region's descriptor */
-	ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size);
-	if (ret)
+	if ((ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size)))
 		goto err_mr_dereg;
 
 	/* verify size of the memory region's descriptor */
@@ -868,7 +855,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 		goto err_mr_dereg;
 
 	if (csd->prepare_connection &&
-	    (ret = csd->prepare_connection(td, conn_req)))
+			(ret = csd->prepare_connection(td, conn_req)))
 		goto err_req_delete;
 
 	/* accept the connection request and obtain the connection object */
@@ -876,10 +863,9 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 		goto err_req_delete;
 
 	/* wait for the connection to be established */
-	ret = rpma_conn_next_event(conn, &conn_event);
-	if (ret)
+	if ((ret = rpma_conn_next_event(conn, &conn_event))) {
 		librpma_td_verror(td, ret, "rpma_conn_next_event");
-	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
+	} else if (conn_event != RPMA_CONN_ESTABLISHED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
 		ret = -1;
 	}

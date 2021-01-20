@@ -74,7 +74,7 @@ struct librpma_common_mem {
 };
 
 char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
-	struct librpma_common_mem *mem);
+		struct librpma_common_mem *mem);
 
 char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 		size_t size, struct librpma_common_mem *mem);
@@ -160,10 +160,11 @@ static inline int librpma_common_client_io_read(struct thread_data *td,
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	size_t dst_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
 	size_t src_offset = io_u->offset;
-	int ret = rpma_read(ccd->conn, ccd->orig_mr, dst_offset,
+	int ret;
+
+	if ((ret = rpma_read(ccd->conn, ccd->orig_mr, dst_offset,
 			ccd->server_mr, src_offset, io_u->xfer_buflen,
-			flags, (void *)(uintptr_t)io_u->index);
-	if (ret) {
+			flags, (void *)(uintptr_t)io_u->index))) {
 		librpma_td_verror(td, ret, "rpma_read");
 		return -1;
 	}
@@ -177,12 +178,12 @@ static inline int librpma_common_client_io_write(struct thread_data *td,
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	size_t src_offset = (char *)(io_u->xfer_buf) - ccd->orig_buffer_aligned;
 	size_t dst_offset = io_u->offset;
+	int ret;
 
-	int ret = rpma_write(ccd->conn, ccd->server_mr, dst_offset,
+	if ((ret = rpma_write(ccd->conn, ccd->server_mr, dst_offset,
 			ccd->orig_mr, src_offset, io_u->xfer_buflen,
 			RPMA_F_COMPLETION_ON_ERROR,
-			(void *)(uintptr_t)io_u->index);
-	if (ret) {
+			(void *)(uintptr_t)io_u->index))) {
 		librpma_td_verror(td, ret, "rpma_write");
 		return -1;
 	}
@@ -219,9 +220,9 @@ int librpma_common_server_init(struct thread_data *td);
 void librpma_common_server_cleanup(struct thread_data *td);
 
 int librpma_common_server_open_file(struct thread_data *td,
-	struct fio_file *f, struct rpma_conn_cfg *cfg);
+		struct fio_file *f, struct rpma_conn_cfg *cfg);
 
 int librpma_common_server_close_file(struct thread_data *td,
-	struct fio_file *f);
+		struct fio_file *f);
 
 #endif /* LIBRPMA_COMMON_H */
