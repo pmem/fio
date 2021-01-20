@@ -70,7 +70,6 @@ static int client_init(struct thread_data *td)
 	struct client_data *cd;
 	uint32_t write_num;
 	struct rpma_conn_cfg *cfg = NULL;
-	int remote_flush_type;
 	int ret;
 	
 	/* not supported readwrite = trim / randtrim / trimwrite */
@@ -142,15 +141,8 @@ static int client_init(struct thread_data *td)
 
 	ccd = td->io_ops_data;
 
-	/* get flush type of the remote node */
-	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr, &remote_flush_type))) {
-		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
-		goto err_cleanup_common;
-	}
-
 	if (ccd->ws->direct_write_to_pmem) {
-		if ((remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ==
-				RPMA_FLUSH_TYPE_PERSISTENT) {
+		if (ccd->server_mr_flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
 			log_info(
 				"Note: The server side supports Direct Write to PMem and it is equipped with PMem (direct_write_to_pmem).\n"
 				"You can use librpma_client and librpma_server engines for better performance instead of GPSPM.\n");
