@@ -39,6 +39,16 @@ struct fio_option librpma_common_fio_options[] = {
 		.group	= FIO_OPT_G_LIBRPMA,
 	},
 	{
+		.name	= "direct_write_to_pmem",
+		.lname	= "rpma_direct_write_to_pmem",
+		.type	= FIO_OPT_BOOL,
+		.off1	= offsetof(struct librpma_common_options, direct_write_to_pmem),
+		.help	= "direct write to PMEM from the remote host is possible",
+		.def	= "",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
 		.name	= NULL,
 	},
 };
@@ -843,6 +853,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* prepare a workspace description */
+	ws.direct_write_to_pmem = o->direct_write_to_pmem;
 	ws.mr_desc_size = mr_desc_size;
 	pdata.ptr = &ws;
 	pdata.len = sizeof(ws);

@@ -40,6 +40,8 @@ struct librpma_common_options {
 	char *server_ip;
 	/* base server listening port */
 	char *port;
+	/* is direct write to PMEM possible */
+	unsigned int direct_write_to_pmem;
 };
 
 extern struct fio_option librpma_common_fio_options[];
@@ -48,10 +50,11 @@ extern struct fio_option librpma_common_fio_options[];
  * Limited by the maximum length of the private data
  * for rdma_connect() in case of RDMA_PS_TCP (28 bytes).
  */
-#define DESCRIPTORS_MAX_SIZE 25
+#define DESCRIPTORS_MAX_SIZE 24
 
 struct librpma_common_workspace {
 	uint16_t max_msg_num;	/* # of RQ slots */
+	uint8_t direct_write_to_pmem; /* is direct write to PMEM possible */
 	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
 	/* buffer containing mr_desc */
 	char descriptors[DESCRIPTORS_MAX_SIZE];
