@@ -80,11 +80,11 @@ void librpma_common_free(struct librpma_common_mem *mem);
 
 /* clients' common */
 
-typedef int (*flush_t)(struct thread_data *td,
+typedef int (*librpma_common_flush_t)(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len);
 
-typedef int (*get_io_u_index_t)(struct rpma_completion *cmpl,
+typedef int (*librpma_common_get_io_u_index_t)(struct rpma_completion *cmpl,
 		unsigned int *io_u_index);
 
 struct librpma_common_client_data {
@@ -116,8 +116,8 @@ struct librpma_common_client_data {
 	/* completion counter */
 	uint32_t op_send_completed;
 
-	flush_t flush;
-	get_io_u_index_t get_io_u_index;
+	librpma_common_flush_t flush;
+	librpma_common_get_io_u_index_t get_io_u_index;
 
 	/* engine-specific client data */
 	void *client_data;
