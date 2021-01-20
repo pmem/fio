@@ -430,16 +430,10 @@ static int server_post_init(struct thread_data *td)
 
 	/* check whether io_u buffer is big enough */
 	if (io_u_buflen < IO_U_BUF_LEN) {
-<<<<<<< HEAD
-		log_err("blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
-				io_u_buflen, IO_U_BUF_LEN);
-		return -1;
-=======
 		log_err(
 			"blocksize too small to accommodate assumed maximal request/response pair size (%" PRIu64 " < %d)\n",
 			io_u_buflen, IO_U_BUF_LEN);
-		return 1;
->>>>>>> a0b47f7f... rpma: use all 80 characters of the line
+		return -1;
 	}
 
 	/*
@@ -489,7 +483,6 @@ static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn
 	int ret;
 	int i;
 
-<<<<<<< HEAD
 	/* prepare buffers for a flush requests */
 	sd->msg_sqe_available = td->o.iodepth;
 	for (i = 0; i < td->o.iodepth; i++) {
@@ -498,18 +491,6 @@ static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn
 				offset_recv_msg, MAX_MSG_SIZE,
 				(const void *)(uintptr_t)i)))
 			return ret;
-=======
-	if (!f->file_name) {
-		log_err("fio: filename is not set\n");
-		return 1;
-	}
-
-	/* verify whether iodepth fits into uint16_t */
-	if (td->o.iodepth > UINT16_MAX) {
-		log_err("fio: iodepth too big (%u > %u)\n",
-			td->o.iodepth, UINT16_MAX);
-		return 1;
->>>>>>> a0b47f7f... rpma: use all 80 characters of the line
 	}
 
 	return 0;
