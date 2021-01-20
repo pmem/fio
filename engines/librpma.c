@@ -152,6 +152,12 @@ static int client_init(struct thread_data *td)
 		(void) rpma_peer_cfg_delete(&pcfg);
 	}
 
+	ret = rpma_conn_cfg_delete(&cfg);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		/* non fatal error - continue */
+	}
+
 	ccd->flush = client_io_flush;
 	ccd->get_io_u_index = client_get_io_u_index;
 	ccd->client_data = cd;
