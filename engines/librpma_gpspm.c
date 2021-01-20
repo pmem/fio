@@ -359,9 +359,6 @@ struct server_data {
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
 
-	char *ws_ptr;
-	struct rpma_mr_local *ws_mr;
-
 	/* resources for messaging buffer from DRAM allocated by fio */
 	struct rpma_mr_local *msg_mr;
 
@@ -480,84 +477,48 @@ static void server_cleanup(struct thread_data *td)
 	librpma_common_server_cleanup(td);
 }
 
-static int server_open_file(struct thread_data *td, struct fio_file *f)
+static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn_req)
 {
 	struct librpma_common_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
-	struct librpma_common_options *o = td->eo;
-	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
-	size_t mem_size = td->o.size;
-	struct rpma_conn_private_data pdata;
-	struct rpma_mr_local *mmap_mr;
-	struct librpma_common_workspace ws;
-	struct rpma_conn_cfg *cfg = NULL;
-	struct rpma_conn_req *conn_req;
-	struct rpma_conn *conn;
-	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
-	struct rpma_ep *ep;
-	size_t mr_desc_size;
-	void *ws_ptr;
 	int ret;
 	int i;
 
-	if (!f->file_name) {
-		log_err("fio: filename is not set\n");
-		return 1;
+	/* prepare buffers for a flush requests */
+	sd->msg_sqe_available = td->o.iodepth;
+	for (i = 0; i < td->o.iodepth; i++) {
+		size_t offset_recv_msg = IO_U_BUFF_OFF_SERVER(i) + RECV_OFFSET;
+		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
+				offset_recv_msg, MAX_MSG_SIZE,
+				(const void *)(uintptr_t)i)))
+			return ret;
 	}
+
+	return 0;
+}
+
+static int server_open_file(struct thread_data *td, struct fio_file *f)
+{
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_common_workspace ws;
+	struct rpma_conn_cfg *cfg = NULL;
+	int ret;
+
+	csd->prepare_connection = prepare_connection;
 
 	/* verify whether iodepth fits into uint16_t */
 	if (td->o.iodepth > UINT16_MAX) {
 		log_err("fio: iodepth too big (%u > %u)\n", td->o.iodepth, UINT16_MAX);
 		return 1;
 	}
+
 	ws.max_msg_num = td->o.iodepth;
-
-	/* start a listening endpoint at addr:port */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
-		return 1;
-
-	ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_ep_listen");
-		return 1;
-	}
-
-	/* allocation from PMEM using pmem_map_file() */
-	ws_ptr = librpma_common_allocate_pmem(td, f->file_name, mem_size,
-			&csd->mem);
-	if (ws_ptr == NULL)
-		goto err_ep_shutdown;
-
-	f->real_file_size = mem_size;
-
-	ret = rpma_mr_reg(csd->peer, ws_ptr, mem_size,
-			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
-			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC,
-			&mmap_mr);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_mr_reg");
-		goto err_pmem_unmap;
-	}
-
-	/* get size of the memory region's descriptor */
-	ret = rpma_mr_get_descriptor_size(mmap_mr, &mr_desc_size);
-	if (ret)
-		goto err_mr_dereg;
-
-	/* get the memory region's descriptor */
-	if ((ret = rpma_mr_get_descriptor(mmap_mr, &ws.descriptors[0])))
-		goto err_mr_dereg;
-
-	/* calculate data for the server read */
-	ws.mr_desc_size = mr_desc_size;
-	pdata.ptr = &ws;
-	pdata.len = sizeof(struct librpma_common_workspace);
 
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		goto err_mr_dereg;
+		return 1;
 	}
 
 	/*
@@ -585,102 +546,12 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_cfg_delete;
 	}
 
-	/* receive an incoming connection request */
-	if ((ret = rpma_ep_next_conn_req(ep, cfg, &conn_req)))
-		goto err_cfg_delete;
-
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
-		goto err_req_delete;
-	}
-
-	/* prepare buffers for a flush requests */
-	sd->msg_sqe_available = td->o.iodepth;
-	for (i = 0; i < td->o.iodepth; i++) {
-		size_t offset_recv_msg = IO_U_BUFF_OFF_SERVER(i) + RECV_OFFSET;
-		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
-				offset_recv_msg, MAX_MSG_SIZE,
-				(const void *)(uintptr_t)i)))
-			goto err_req_delete;
-	}
-
-	/* accept the connection request and obtain the connection object */
-	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
-		goto err_conn_delete;
-
-	/* wait for the connection to be established */
-	ret = rpma_conn_next_event(conn, &conn_event);
-	if (ret)
-		librpma_td_verror(td, ret, "rpma_conn_next_event");
-	if (!ret && conn_event != RPMA_CONN_ESTABLISHED)
-		log_err("rpma_conn_next_event returned an unexptected event\n");
-	if (ret)
-		goto err_conn_delete;
-
-	/* end-point is no longer needed */
-	(void) rpma_ep_shutdown(&ep);
-
-	sd->ws_ptr = ws_ptr;
-	sd->ws_mr = mmap_mr;
-	csd->conn = conn;
-
-	return 0;
-
-err_conn_delete:
-	(void) rpma_conn_delete(&conn);
-
-err_req_delete:
-	(void) rpma_conn_req_delete(&conn_req);
+	ret = librpma_common_server_open_file(td, f, cfg);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
-err_mr_dereg:
-	(void) rpma_mr_dereg(&mmap_mr);
-
-err_pmem_unmap:
-	librpma_common_free(&csd->mem);
-
-err_ep_shutdown:
-	(void) rpma_ep_shutdown(&ep);
-
-	return 1;
-}
-
-static int server_close_file(struct thread_data *td, struct fio_file *f)
-{
-	struct librpma_common_server_data *csd = td->io_ops_data;
-	struct server_data *sd = csd->server_data;
-	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
-	int ret;
-	int rv;
-
-	/* wait for the connection to be closed */
-	ret = rpma_conn_next_event(csd->conn, &conn_event);
-	if (!ret && conn_event != RPMA_CONN_CLOSED) {
-		log_err("rpma_conn_next_event returned an unexptected event\n");
-		rv = 1;
-	}
-
-	if ((ret = rpma_conn_disconnect(csd->conn))) {
-		librpma_td_verror(td, ret, "rpma_conn_disconnect");
-		rv |= ret;
-	}
-
-	if ((ret = rpma_conn_delete(&csd->conn))) {
-		librpma_td_verror(td, ret, "rpma_conn_delete");
-		rv |= ret;
-	}
-
-	if ((ret = rpma_mr_dereg(&sd->ws_mr))) {
-		librpma_td_verror(td, ret, "rpma_mr_dereg");
-		rv |= ret;
-	}
-
-	librpma_common_free(&csd->mem);
-
-	return rv ? -1 : 0;
+	return (ret != 0 ? ret : -1);
 }
 
 static int server_qe_process(struct thread_data *td, struct rpma_completion *cmpl)
@@ -715,7 +586,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	if (IS_NOT_THE_LAST_MESSAGE(flush_req)) {
-		op_ptr = sd->ws_ptr + flush_req->offset;
+		op_ptr = csd->ws_ptr + flush_req->offset;
 		pmem_persist(op_ptr, flush_req->length);
 	} else {
 		/*
@@ -843,7 +714,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.init			= server_init,
 	.post_init		= server_post_init,
 	.open_file		= server_open_file,
-	.close_file		= server_close_file,
+	.close_file		= librpma_common_server_close_file,
 	.queue			= server_queue,
 	.invalidate		= librpma_common_file_nop,
 	.cleanup		= server_cleanup,

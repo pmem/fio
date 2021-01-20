@@ -68,6 +68,23 @@ int librpma_common_td_port(const char *port_base_str,
 	return 0;
 }
 
+char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
+	struct librpma_common_mem *mem)
+{
+	char *mem_ptr = NULL;
+	int ret;
+
+	if ((ret = posix_memalign((void **)&mem_ptr, page_size, size))) {
+		log_err("fio: posix_memalign() failed\n");
+		td_verror(td, ret, "posix_memalign");
+		return NULL;
+	}
+
+	mem->mem_ptr = mem_ptr;
+	mem->size_mmap = 0;
+
+	return mem_ptr;
+}
 
 char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 	size_t size, struct librpma_common_mem *mem)
@@ -739,12 +756,167 @@ void librpma_common_server_cleanup(struct thread_data *td)
 	free(csd);
 }
 
-int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f)
+int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
+					struct rpma_conn_cfg *cfg)
 {
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_common_options *o = td->eo;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
+	struct librpma_common_workspace ws;
+	struct rpma_conn_private_data pdata;
+	struct rpma_conn_req *conn_req;
+	struct rpma_conn *conn;
+	struct rpma_mr_local *mr;
+	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
+	struct rpma_ep *ep;
+	size_t mem_size = td->o.size;
+	size_t mr_desc_size;
+	void *ws_ptr;
+	int usage_mem_type;
+	int ret;
+
+	if (!f->file_name) {
+		log_err("fio: filename is not set\n");
+		return 1;
+	}
+
+	/* start a listening endpoint at addr:port */
+	if ((ret = librpma_common_td_port(o->port, td, port_td)))
+		return 1;
+
+	ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_ep_listen");
+		return 1;
+	}
+
+	if (strcmp(f->file_name, "malloc") == 0) {
+		/* allocation from DRAM using posix_memalign() */
+		ws_ptr = librpma_common_allocate_dram(td, mem_size, &csd->mem);
+		usage_mem_type = RPMA_MR_USAGE_FLUSH_TYPE_VISIBILITY;
+	} else {
+		/* allocation from PMEM using pmem_map_file() */
+		ws_ptr = librpma_common_allocate_pmem(td, f->file_name,
+				mem_size, &csd->mem);
+		usage_mem_type = RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT;
+	}
+
+	if (ws_ptr == NULL)
+		goto err_ep_shutdown;
+
+	f->real_file_size = mem_size;
+
+	ret = rpma_mr_reg(csd->peer, ws_ptr, mem_size,
+			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
+			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
+			usage_mem_type,
+			&mr);
+	if (ret) {
+		librpma_td_verror(td, ret, "rpma_mr_reg");
+		goto err_free;
+	}
+
+	/* get size of the memory region's descriptor */
+	ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size);
+	if (ret)
+		goto err_mr_dereg;
+
+	/* verify size of the memory region's descriptor */
+	if (mr_desc_size > DESCRIPTORS_MAX_SIZE) {
+		log_err("size of the memory region's descriptor is too big (max=%i)\n",
+			DESCRIPTORS_MAX_SIZE);
+		goto err_mr_dereg;
+	}
+
+	/* get the memory region's descriptor */
+	if ((ret = rpma_mr_get_descriptor(mr, &ws.descriptors[0])))
+		goto err_mr_dereg;
+
+	/* prepare a workspace description */
+	ws.mr_desc_size = mr_desc_size;
+	pdata.ptr = &ws;
+	pdata.len = sizeof(ws);
+
+	/* receive an incoming connection request */
+	if ((ret = rpma_ep_next_conn_req(ep, cfg, &conn_req)))
+		goto err_mr_dereg;
+
+	if (csd->prepare_connection &&
+	    (ret = csd->prepare_connection(td, conn_req)))
+		goto err_req_delete;
+
+	/* accept the connection request and obtain the connection object */
+	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
+		goto err_req_delete;
+
+	/* wait for the connection to be established */
+	ret = rpma_conn_next_event(conn, &conn_event);
+	if (ret)
+		librpma_td_verror(td, ret, "rpma_conn_next_event");
+	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		ret = 1;
+	}
+	if (ret)
+		goto err_conn_delete;
+
+	/* end-point is no longer needed */
+	(void) rpma_ep_shutdown(&ep);
+
+	csd->ws_mr = mr;
+	csd->ws_ptr = ws_ptr;
+	csd->conn = conn;
+
 	return 0;
+
+err_conn_delete:
+	(void) rpma_conn_delete(&conn);
+
+err_req_delete:
+	(void) rpma_conn_req_delete(&conn_req);
+
+err_mr_dereg:
+	(void) rpma_mr_dereg(&mr);
+
+err_free:
+	librpma_common_free(&csd->mem);
+
+err_ep_shutdown:
+	(void) rpma_ep_shutdown(&ep);
+
+	return -1;
 }
 
 int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	return 0;
+	struct librpma_common_server_data *csd = td->io_ops_data;
+	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
+	int rv = 0;
+	int ret;
+
+	/* wait for the connection to be closed */
+	ret = rpma_conn_next_event(csd->conn, &conn_event);
+	if (!ret && conn_event != RPMA_CONN_CLOSED) {
+		log_err("rpma_conn_next_event returned an unexptected event\n");
+		rv = 1;
+	}
+
+	if ((ret = rpma_conn_disconnect(csd->conn))) {
+		librpma_td_verror(td, ret, "rpma_conn_disconnect");
+		rv = 1;
+	}
+
+	if ((ret = rpma_conn_delete(&csd->conn))) {
+		librpma_td_verror(td, ret, "rpma_conn_delete");
+		rv = 1;
+	}
+
+	if ((ret = rpma_mr_dereg(&csd->ws_mr))) {
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
+		rv = 1;
+	}
+
+	librpma_common_free(&csd->mem);
+
+	return rv;
 }
