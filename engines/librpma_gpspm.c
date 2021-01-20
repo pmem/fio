@@ -393,6 +393,12 @@ static int server_init(struct thread_data *td)
 		goto err_free_sd;
 	}
 
+	/*
+	 * Assure a single io_u buffer can store both SEND and RECV messages.
+	 * User-provided value is intentionally ignored.
+	 */
+	td->o.max_bs[DDIR_READ] = IO_U_BUF_LEN;
+
 	csd->server_data = sd;
 
 	return 0;
