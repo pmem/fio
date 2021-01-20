@@ -214,12 +214,6 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 		goto err_peer_delete;
 	}
 
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
-		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
-		goto err_peer_delete;
-	}
-
 	/* connect the connection request and obtain the connection object */
 	ret = rpma_conn_req_connect(&req, NULL, &ccd->conn);
 	if (ret) {
