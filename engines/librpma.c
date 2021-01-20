@@ -130,6 +130,12 @@ static int client_init(struct thread_data *td)
 		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
 
 	if (cd->flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
+		if (!ccd->ws->direct_write_to_pmem) {
+			log_err(
+				"Fio librpma engine will not work until the Direct Write to PMem on the server side is possible (direct_write_to_pmem)\n");
+			goto err_cleanup_common;
+		}
+
 		/* configure peer's direct write to pmem support */
 		ret = rpma_peer_cfg_new(&pcfg);
 		if (ret) {
@@ -150,6 +156,10 @@ static int client_init(struct thread_data *td)
 		}
 
 		(void) rpma_peer_cfg_delete(&pcfg);
+	} else {
+		log_info(
+			"Note: Direct Write to PMem is not supported by default nor required if you use DRAM instead of PMem on the server side (direct_write_to_pmem).\n"
+			"Remember that flushing to DRAM does not make your data persistent and may be used only for experimental purposes.\n");
 	}
 
 	ret = rpma_conn_cfg_delete(&cfg);
