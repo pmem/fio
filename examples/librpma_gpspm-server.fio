@@ -26,11 +26,6 @@ iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 size=[size of workspace for a single connection]
 filename=[device dax or an existing fsdax file]
 
-# XXX blocksize should equal the sum of the sizes of recv and send messages.
-# It is set to a fixed value now, but there is a possibility to calculate it
-# at runtime (according to values suggested by protobuff-c).
-blocksize=1024
-
 # The client will terminate the server when the client will end up its job.
 time_based
 runtime=365d
