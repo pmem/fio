@@ -182,7 +182,7 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(*ccd->io_us_queued));
 	if (ccd->io_us_queued == NULL) {
 		td_verror(td, errno, "calloc");
-		goto err_free_io_u_queues;
+		goto err_free_ccd;
 	}
 
 	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(*ccd->io_us_flight));
