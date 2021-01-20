@@ -548,7 +548,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
-	return (ret != 0 ? ret : -1);
+	return (ret <= 0 ? ret : -1);
 }
 
 static int server_qe_process(struct thread_data *td, struct rpma_completion *cmpl)
