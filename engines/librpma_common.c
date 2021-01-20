@@ -182,22 +182,19 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(*ccd->io_us_queued));
 	if (ccd->io_us_queued == NULL) {
 		td_verror(td, errno, "calloc");
-		goto err_free_ccd;
+		goto err_free_io_u_queues;
 	}
 
 	ccd->io_us_flight = calloc(td->o.iodepth, sizeof(*ccd->io_us_flight));
 	if (ccd->io_us_flight == NULL) {
 		td_verror(td, errno, "calloc");
-		free(ccd->io_us_queued);
-		goto err_free_ccd;
+		goto err_free_io_u_queues;
 	}
 
 	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(*ccd->io_us_completed));
 	if (ccd->io_us_completed == NULL) {
 		td_verror(td, errno, "calloc");
-		free(ccd->io_us_queued);
-		free(ccd->io_us_flight);
-		goto err_free_ccd;
+		goto err_free_io_u_queues;
 	}
 
 	/* obtain an IBV context for a remote IP address */
