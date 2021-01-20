@@ -758,6 +758,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct librpma_common_workspace ws;
 	struct rpma_conn_private_data pdata;
+	uint32_t max_msg_num;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
 	struct rpma_mr_local *mr;
@@ -825,6 +826,21 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	/* get the memory region's descriptor */
 	if ((ret = rpma_mr_get_descriptor(mr, &ws.descriptors[0])))
 		goto err_mr_dereg;
+
+	if (cfg != NULL) {
+		if ((ret = rpma_conn_cfg_get_rq_size(cfg, &max_msg_num))) {
+			librpma_td_verror(td, ret, "rpma_conn_cfg_get_rq_size");
+			goto err_mr_dereg;
+		}
+
+		/* verify whether iodepth fits into uint16_t */
+		if (max_msg_num > UINT16_MAX) {
+			log_err("fio: iodepth too big (%u > %u)\n", max_msg_num, UINT16_MAX);
+			return -1;
+		}
+
+		ws.max_msg_num = max_msg_num;
+	}
 
 	/* prepare a workspace description */
 	ws.mr_desc_size = mr_desc_size;

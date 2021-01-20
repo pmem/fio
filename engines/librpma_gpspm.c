@@ -505,19 +505,11 @@ static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
 	struct librpma_common_server_data *csd = td->io_ops_data;
-	struct librpma_common_workspace ws;
 	struct rpma_conn_cfg *cfg = NULL;
+	uint16_t max_msg_num = td->o.iodepth;
 	int ret;
 
 	csd->prepare_connection = prepare_connection;
-
-	/* verify whether iodepth fits into uint16_t */
-	if (td->o.iodepth > UINT16_MAX) {
-		log_err("fio: iodepth too big (%u > %u)\n", td->o.iodepth, UINT16_MAX);
-		return -1;
-	}
-
-	ws.max_msg_num = td->o.iodepth;
 
 	/* create a connection configuration object */
 	ret = rpma_conn_cfg_new(&cfg);
@@ -535,17 +527,17 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	 * - the completion queue (CQ) has to be big enough to accommodate all
 	 *   success and error completions (sq_size + rq_size)
 	 */
-	ret = rpma_conn_cfg_set_sq_size(cfg, ws.max_msg_num);
+	ret = rpma_conn_cfg_set_sq_size(cfg, max_msg_num);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_rq_size(cfg, ws.max_msg_num);
+	ret = rpma_conn_cfg_set_rq_size(cfg, max_msg_num);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
 		goto err_cfg_delete;
 	}
-	ret = rpma_conn_cfg_set_cq_size(cfg, ws.max_msg_num * 2);
+	ret = rpma_conn_cfg_set_cq_size(cfg, max_msg_num * 2);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
