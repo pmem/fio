@@ -14,10 +14,6 @@
  * GNU General Public License for more details.
  */
 
-#include "../fio.h"
-#include "../hash.h"
-#include "../optgroup.h"
-
 #include "librpma_common.h"
 
 #include <libpmem.h>
