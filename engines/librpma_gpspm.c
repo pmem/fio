@@ -79,7 +79,7 @@ static int client_init(struct thread_data *td)
 	}
 
 	/* allocate client's data */
-	cd = calloc(1, sizeof(struct client_data));
+	cd = calloc(1, sizeof(*cd));
 	if (cd == NULL) {
 		td_verror(td, errno, "calloc");
 		return -1;
@@ -324,7 +324,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 		return -1;
 	}
 
-	memcpy(io_u_index, &flush_resp->op_context, sizeof(unsigned int));
+	memcpy(io_u_index, &flush_resp->op_context, sizeof(*io_u_index));
 
 	gpspm_flush_response__free_unpacked(flush_resp, NULL);
 
@@ -381,14 +381,14 @@ static int server_init(struct thread_data *td)
 	csd = td->io_ops_data;
 
 	/* allocate server's data */
-	sd = calloc(1, sizeof(struct librpma_common_server_data));
+	sd = calloc(1, sizeof(*sd));
 	if (sd == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_server_cleanup;
 	}
 
 	/* allocate in-memory queue */
-	sd->msgs_queued = calloc(td->o.iodepth, sizeof(struct rpma_completion));
+	sd->msgs_queued = calloc(td->o.iodepth, sizeof(*sd->msgs_queued));
 	if (sd->msgs_queued == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_sd;
@@ -651,7 +651,7 @@ static inline int server_queue_process(struct thread_data *td)
 	/* progress the queue */
 	for (i = 0; i < sd->msg_queued_nr - qes_to_process; ++i) {
 		memcpy(&sd->msgs_queued[i], &sd->msgs_queued[qes_to_process + i],
-				sizeof(struct rpma_completion));
+				sizeof(sd->msgs_queued[i]));
 	}
 	sd->msg_queued_nr -= qes_to_process;
 
