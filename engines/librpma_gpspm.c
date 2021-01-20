@@ -136,7 +136,7 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 	
-	if ((ret = librpma_common_client_init(td, cfg)))
+	if (librpma_common_client_init(td, cfg))
 		goto err_cfg_delete;
 
 	ccd = td->io_ops_data;
@@ -157,8 +157,7 @@ static int client_init(struct thread_data *td)
 		goto err_cleanup_common;
 	}
 
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_delete(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		/* non fatal error - continue */
 	}
@@ -504,8 +503,10 @@ static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn
 		size_t offset_recv_msg = IO_U_BUFF_OFF_SERVER(i) + RECV_OFFSET;
 		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
 				offset_recv_msg, MAX_MSG_SIZE,
-				(const void *)(uintptr_t)i)))
+				(const void *)(uintptr_t)i))) {
+			librpma_td_verror(td, ret, "rpma_conn_req_recv");
 			return ret;
+		}
 	}
 
 	return 0;
@@ -620,8 +621,10 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 
 	/* send the flush response */
 	if ((ret = rpma_send(csd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
-			RPMA_F_COMPLETION_ALWAYS, NULL)))
+			RPMA_F_COMPLETION_ALWAYS, NULL))) {
+		librpma_td_verror(td, ret, "rpma_send");
 		goto err_terminate;
+	}
 	--sd->msg_sqe_available;
 
 	return 0;
@@ -695,13 +698,11 @@ err_terminate:
 
 static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 {
-	int ret;
-
 	do {
-		if ((ret = server_cmpl_process(td)))
+		if (server_cmpl_process(td))
 			return FIO_Q_BUSY;
 
-		if ((ret = server_queue_process(td)))
+		if (server_queue_process(td))
 			return FIO_Q_BUSY;
 
 	} while (!td->done);

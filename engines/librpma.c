@@ -99,7 +99,7 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 
-	if ((ret = librpma_common_client_init(td, cfg)))
+	if (librpma_common_client_init(td, cfg))
 		goto err_cfg_delete;
 
 	ccd = td->io_ops_data;
@@ -134,8 +134,7 @@ static int client_init(struct thread_data *td)
 			"Remember that flushing to DRAM does not make your data persistent and may be used only for experimental purposes.\n");
 	}
 
-	ret = rpma_conn_cfg_delete(&cfg);
-	if (ret) {
+	if ((ret = rpma_conn_cfg_delete(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		/* non fatal error - continue */
 	}
