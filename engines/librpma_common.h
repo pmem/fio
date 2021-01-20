@@ -214,9 +214,10 @@ int librpma_common_server_init(struct thread_data *td);
 
 void librpma_common_server_cleanup(struct thread_data *td);
 
-int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
-					struct rpma_conn_cfg *cfg);
+int librpma_common_server_open_file(struct thread_data *td,
+	struct fio_file *f, struct rpma_conn_cfg *cfg);
 
-int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f);
+int librpma_common_server_close_file(struct thread_data *td,
+	struct fio_file *f);
 
 #endif /* LIBRPMA_COMMON_H */
