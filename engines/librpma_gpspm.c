@@ -314,7 +314,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 	GPSPMFlushResponse *flush_resp;
 
 	if (cmpl->op != RPMA_OP_RECV)
-		return -1;
+		return 0;
 
 	/* unpack a response from the received buffer */
 	flush_resp = gpspm_flush_response__unpack(NULL,
@@ -328,7 +328,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 
 	gpspm_flush_response__free_unpacked(flush_resp, NULL);
 
-	return 0;
+	return 1;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
