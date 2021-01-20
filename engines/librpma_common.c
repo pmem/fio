@@ -43,8 +43,8 @@ struct fio_option librpma_common_fio_options[] = {
 	},
 };
 
-int librpma_common_td_port(const char *port_base_str,
-		struct thread_data *td, char *port_out)
+int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
+		char *port_out)
 {
 	unsigned long int port_ul = strtoul(port_base_str, NULL, 10);
 	unsigned int port_new;
@@ -87,7 +87,7 @@ char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
 }
 
 char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
-	size_t size, struct librpma_common_mem *mem)
+		size_t size, struct librpma_common_mem *mem)
 {
 	size_t size_mmap = 0;
 	char *mem_ptr = NULL;
@@ -112,7 +112,8 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 
 	/* pmem is expected */
 	if (!is_pmem) {
-		log_err("fio: %s is not located in persistent memory\n", filename);
+		log_err("fio: %s is not located in persistent memory\n",
+			filename);
 		goto err_unmap;
 	}
 
@@ -145,8 +146,7 @@ void librpma_common_free(struct librpma_common_mem *mem)
 		free(mem->mem_ptr);
 }
 
-int librpma_common_client_init(struct thread_data *td,
-		struct rpma_conn_cfg *cfg)
+int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg)
 {
 	struct librpma_common_client_data *ccd;
 	struct librpma_common_options *o = td->eo;
@@ -192,8 +192,7 @@ int librpma_common_client_init(struct thread_data *td,
 
 	/* obtain an IBV context for a remote IP address */
 	ret = rpma_utils_get_ibv_context(o->server_ip,
-				RPMA_UTIL_IBV_CONTEXT_REMOTE,
-				&dev);
+			RPMA_UTIL_IBV_CONTEXT_REMOTE, &dev);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_io_u_queues;
@@ -346,8 +345,7 @@ int librpma_common_client_post_init(struct thread_data *td)
 	if ((ret = rpma_mr_reg(ccd->peer, ccd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
-			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT,
-			&ccd->orig_mr)))
+			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT, &ccd->orig_mr)))
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 	return ret;
 }
@@ -364,7 +362,7 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 }
 
 static enum fio_q_status client_queue_sync(struct thread_data *td,
-					  struct io_u *io_u)
+		struct io_u *io_u)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
@@ -513,7 +511,8 @@ int librpma_common_client_commit(struct thread_data *td)
 			flush_first_io_u = NULL;
 			flush_len = 0;
 		} else {
-			log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
+			log_err("unsupported IO mode: %s\n",
+				io_ddir_name(io_u->ddir));
 			return -1;
 		}
 	}
@@ -713,8 +712,7 @@ int librpma_common_server_init(struct thread_data *td)
 
 	/* obtain an IBV context for a remote IP address */
 	ret = rpma_utils_get_ibv_context(o->server_ip,
-				RPMA_UTIL_IBV_CONTEXT_LOCAL,
-				&dev);
+			RPMA_UTIL_IBV_CONTEXT_LOCAL, &dev);
 	if (ret) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_csd;

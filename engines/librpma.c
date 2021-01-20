@@ -233,8 +233,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	return librpma_common_server_open_file(td, f, NULL);
 }
 
-static enum fio_q_status server_queue(struct thread_data *td,
-					struct io_u *io_u)
+static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 {
 	return FIO_Q_COMPLETED;
 }
