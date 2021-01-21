@@ -102,8 +102,15 @@ char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
 	size_t size_mmap = 0;
 	char *mem_ptr = NULL;
 	int is_pmem = 0;
-	/* XXX assuming size is page aligned */
-	size_t ws_offset = (td->thread_number - 1) * size;
+	size_t ws_offset;
+
+	if (size % page_size) {
+		log_err("fio: size (%zu) is not aligned to page size (%zu)\n",
+			size, page_size);
+		return NULL;
+	}
+
+	ws_offset = (td->thread_number - 1) * size;
 
 	if (!filename) {
 		log_err("fio: filename is not set\n");
