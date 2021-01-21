@@ -253,7 +253,7 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	ccd->ws = pdata.ptr;
 
 	/* create the server's memory representation */
-	if ((ret = rpma_mr_remote_from_descriptor(&ccd->ws->descriptors[0],
+	if ((ret = rpma_mr_remote_from_descriptor(&ccd->ws->descriptor[0],
 			ccd->ws->mr_desc_size, &ccd->server_mr))) {
 		librpma_td_verror(td, ret, "rpma_mr_remote_from_descriptor");
 		goto err_conn_delete;
@@ -836,14 +836,14 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* verify size of the memory region's descriptor */
-	if (mr_desc_size > DESCRIPTORS_MAX_SIZE) {
+	if (mr_desc_size > DESCRIPTOR_MAX_SIZE) {
 		log_err("size of the memory region's descriptor is too big (max=%i)\n",
-			DESCRIPTORS_MAX_SIZE);
+			DESCRIPTOR_MAX_SIZE);
 		goto err_mr_dereg;
 	}
 
 	/* get the memory region's descriptor */
-	if ((ret = rpma_mr_get_descriptor(mr, &ws.descriptors[0]))) {
+	if ((ret = rpma_mr_get_descriptor(mr, &ws.descriptor[0]))) {
 		librpma_td_verror(td, ret, "rpma_mr_get_descriptor");
 		goto err_mr_dereg;
 	}
