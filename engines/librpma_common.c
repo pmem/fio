@@ -219,7 +219,7 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	}
 
 	/* create a connection request */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
+	if (librpma_common_td_port(o->port, td, port_td))
 		goto err_peer_delete;
 	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td, cfg, &req))) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
@@ -234,6 +234,7 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 
 	/* wait for the connection to establish */
 	if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
+		librpma_td_verror(td, ret, "rpma_conn_next_event");
 		goto err_conn_delete;
 	} else if (event != RPMA_CONN_ESTABLISHED) {
 		log_err(
@@ -243,16 +244,20 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	}
 
 	/* get the connection's private data sent from the server */
-	if ((ret = rpma_conn_get_private_data(ccd->conn, &pdata)))
+	if ((ret = rpma_conn_get_private_data(ccd->conn, &pdata))) {
+		librpma_td_verror(td, ret, "rpma_conn_get_private_data");
 		goto err_conn_delete;
+	}
 
 	/* get the server's workspace representation */
 	ccd->ws = pdata.ptr;
 
 	/* create the server's memory representation */
 	if ((ret = rpma_mr_remote_from_descriptor(&ccd->ws->descriptors[0],
-			ccd->ws->mr_desc_size, &ccd->server_mr)))
+			ccd->ws->mr_desc_size, &ccd->server_mr))) {
+		librpma_td_verror(td, ret, "rpma_mr_remote_from_descriptor");
 		goto err_conn_delete;
+	}
 
 	/* get the total size of the shared server memory */
 	if ((ret = rpma_mr_remote_get_size(ccd->server_mr, &ccd->ws_size))) {
@@ -385,13 +390,13 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	/* execute io_u */
 	if (io_u->ddir == DDIR_READ) {
 		/* post an RDMA read operation */
-		if ((ret = librpma_common_client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS)))
+		if (librpma_common_client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS))
 			goto err;
 	} else if (io_u->ddir == DDIR_WRITE) {
 		/* post an RDMA write operation */
-		if ((ret = librpma_common_client_io_write(td, io_u)))
+		if (librpma_common_client_io_write(td, io_u))
 			goto err;
-		if ((ret = ccd->flush(td, io_u, io_u, io_u->xfer_buflen)))
+		if (ccd->flush(td, io_u, io_u, io_u->xfer_buflen))
 			goto err;
 	} else {
 		log_err("unsupported IO mode: %s\n", io_ddir_name(io_u->ddir));
@@ -461,7 +466,6 @@ int librpma_common_client_commit(struct thread_data *td)
 	int flags = RPMA_F_COMPLETION_ON_ERROR;
 	struct timespec now;
 	bool fill_time;
-	int ret;
 	int i;
 	struct io_u *flush_first_io_u = NULL;
 	unsigned long long int flush_len = 0;
@@ -477,11 +481,11 @@ int librpma_common_client_commit(struct thread_data *td)
 			if (i + 1 == ccd->io_u_queued_nr || ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
 				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
-			if ((ret = librpma_common_client_io_read(td, io_u, flags)))
+			if (librpma_common_client_io_read(td, io_u, flags))
 				return -1;
 		} else if (io_u->ddir == DDIR_WRITE) {
 			/* post an RDMA write operation */
-			if ((ret = librpma_common_client_io_write(td, io_u)))
+			if (librpma_common_client_io_write(td, io_u))
 				return -1;
 
 			/* cache the first io_u in the sequence */
@@ -512,7 +516,7 @@ int librpma_common_client_commit(struct thread_data *td)
 			}
 
 			/* flush all writes which build a continuous sequence */
-			if ((ret = ccd->flush(td, flush_first_io_u, io_u, flush_len)))
+			if (ccd->flush(td, flush_first_io_u, io_u, flush_len))
 				return -1;
 
 			/*
@@ -792,7 +796,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* start a listening endpoint at addr:port */
-	if ((ret = librpma_common_td_port(o->port, td, port_td)))
+	if (librpma_common_td_port(o->port, td, port_td))
 		return -1;
 
 	if ((ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep))) {
@@ -825,8 +829,10 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* get size of the memory region's descriptor */
-	if ((ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size)))
+	if ((ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size))) {
+		librpma_td_verror(td, ret, "rpma_mr_get_descriptor_size");
 		goto err_mr_dereg;
+	}
 
 	/* verify size of the memory region's descriptor */
 	if (mr_desc_size > DESCRIPTORS_MAX_SIZE) {
@@ -836,8 +842,10 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* get the memory region's descriptor */
-	if ((ret = rpma_mr_get_descriptor(mr, &ws.descriptors[0])))
+	if ((ret = rpma_mr_get_descriptor(mr, &ws.descriptors[0]))) {
+		librpma_td_verror(td, ret, "rpma_mr_get_descriptor");
 		goto err_mr_dereg;
+	}
 
 	if (cfg != NULL) {
 		if ((ret = rpma_conn_cfg_get_rq_size(cfg, &max_msg_num))) {
@@ -861,26 +869,28 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	pdata.len = sizeof(ws);
 
 	/* receive an incoming connection request */
-	if ((ret = rpma_ep_next_conn_req(ep, cfg, &conn_req)))
+	if ((ret = rpma_ep_next_conn_req(ep, cfg, &conn_req))) {
+		librpma_td_verror(td, ret, "rpma_ep_next_conn_req");
 		goto err_mr_dereg;
+	}
 
-	if (csd->prepare_connection &&
-			(ret = csd->prepare_connection(td, conn_req)))
+	if (csd->prepare_connection && csd->prepare_connection(td, conn_req))
 		goto err_req_delete;
 
 	/* accept the connection request and obtain the connection object */
-	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn)))
+	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn))){
+		librpma_td_verror(td, ret, "rpma_conn_req_connect");
 		goto err_req_delete;
+	}
 
 	/* wait for the connection to be established */
 	if ((ret = rpma_conn_next_event(conn, &conn_event))) {
 		librpma_td_verror(td, ret, "rpma_conn_next_event");
+		goto err_conn_delete;
 	} else if (conn_event != RPMA_CONN_ESTABLISHED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
-		ret = -1;
-	}
-	if (ret)
 		goto err_conn_delete;
+	}
 
 	/* end-point is no longer needed */
 	(void) rpma_ep_shutdown(&ep);
