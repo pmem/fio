@@ -875,12 +875,11 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	/* wait for the connection to be established */
 	if ((ret = rpma_conn_next_event(conn, &conn_event))) {
 		librpma_td_verror(td, ret, "rpma_conn_next_event");
+		goto err_conn_delete;
 	} else if (conn_event != RPMA_CONN_ESTABLISHED) {
 		log_err("rpma_conn_next_event returned an unexptected event\n");
-		ret = -1;
-	}
-	if (ret)
 		goto err_conn_delete;
+	}
 
 	/* end-point is no longer needed */
 	(void) rpma_ep_shutdown(&ep);
