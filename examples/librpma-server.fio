@@ -17,6 +17,10 @@ thread
 
 [server]
 create_serialize=0
+# 'direct_write_to_pmem' should be set to true (1) ONLY
+# when Direct Write to PMem from the remote host is possible
+# (https://pmem.io/rpma/documentation/basic-direct-write-to-pmem.html)
+direct_write_to_pmem=1
 numjobs=1 [has to be the same as the value provided for the client]
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 size=[size of workspace for a single connection]

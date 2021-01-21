@@ -18,6 +18,10 @@ thread
 
 [server]
 create_serialize=0
+# 'direct_write_to_pmem' should be set to true (1) ONLY
+# when Direct Write to PMem from the remote host is possible
+# (https://pmem.io/rpma/documentation/basic-direct-write-to-pmem.html)
+direct_write_to_pmem=1
 numjobs=1
 # XXX iodepth can be passed to the client side for validation along with
 # the workspace description.
