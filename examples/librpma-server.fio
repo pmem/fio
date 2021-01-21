@@ -17,7 +17,7 @@ thread
 
 [server]
 create_serialize=0
-num_jobs=1 [has to be the same as the value provided for the client]
+numjobs=1 [has to be the same as the value provided for the client]
 iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
 size=[size of workspace for a single connection]
 filename=[device dax or an existing fsdax file or "malloc" for allocation from DRAM]
