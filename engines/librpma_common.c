@@ -169,13 +169,6 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	int remote_flush_type;
 	int ret;
 
-	/* allocate client's data */
-	ccd = calloc(1, sizeof(*ccd));
-	if (ccd == NULL) {
-		td_verror(td, errno, "calloc");
-		return -1;
-	}
-
 	/* --debug=net sets RPMA_LOG_THRESHOLD_AUX to RPMA_LOG_LEVEL_INFO */
 #ifdef FIO_INC_DEBUG
 	if ((1UL << FD_NET) & fio_debug)
@@ -185,6 +178,20 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	/* configure logging thresholds to see more details */
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, log_level_aux);
+
+	/* obtain an IBV context for a remote IP address */
+	if ((ret = rpma_utils_get_ibv_context(o->server_ip,
+			RPMA_UTIL_IBV_CONTEXT_REMOTE, &dev))) {
+		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
+		return -1;
+	}
+
+	/* allocate client's data */
+	ccd = calloc(1, sizeof(*ccd));
+	if (ccd == NULL) {
+		td_verror(td, errno, "calloc");
+		return -1;
+	}
 
 	/* allocate all in-memory queues */
 	ccd->io_us_queued = calloc(td->o.iodepth, sizeof(*ccd->io_us_queued));
@@ -202,13 +209,6 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(*ccd->io_us_completed));
 	if (ccd->io_us_completed == NULL) {
 		td_verror(td, errno, "calloc");
-		goto err_free_io_u_queues;
-	}
-
-	/* obtain an IBV context for a remote IP address */
-	if ((ret = rpma_utils_get_ibv_context(o->server_ip,
-			RPMA_UTIL_IBV_CONTEXT_REMOTE, &dev))) {
-		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
 		goto err_free_io_u_queues;
 	}
 
@@ -725,18 +725,19 @@ int librpma_common_server_init(struct thread_data *td)
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
 	rpma_log_set_threshold(RPMA_LOG_THRESHOLD_AUX, log_level_aux);
 
-	/* allocate server's data */
-	csd = calloc(1, sizeof(*csd));
-	if (csd == NULL) {
-		td_verror(td, errno, "calloc");
-		return -1;
-	}
 
 	/* obtain an IBV context for a remote IP address */
 	if ((ret = rpma_utils_get_ibv_context(o->server_ip,
 			RPMA_UTIL_IBV_CONTEXT_LOCAL, &dev))) {
 		librpma_td_verror(td, ret, "rpma_utils_get_ibv_context");
-		goto err_free_csd;
+		return -1;
+	}
+
+	/* allocate server's data */
+	csd = calloc(1, sizeof(*csd));
+	if (csd == NULL) {
+		td_verror(td, errno, "calloc");
+		return -1;
 	}
 
 	/* create a new peer object */
