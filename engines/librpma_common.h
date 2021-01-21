@@ -55,9 +55,9 @@ extern struct fio_option librpma_common_fio_options[];
 struct librpma_common_workspace {
 	uint16_t max_msg_num;	/* # of RQ slots */
 	uint8_t direct_write_to_pmem; /* Direct Write to PMem is possible */
-	uint8_t mr_desc_size;	/* size of mr_desc in descriptors[] */
+	uint8_t mr_desc_size;	/* size of mr_desc in descriptor[] */
 	/* buffer containing mr_desc */
-	char descriptors[DESCRIPTORS_MAX_SIZE];
+	char descriptor[DESCRIPTORS_MAX_SIZE];
 };
 
 #define LIBRPMA_COMMON_PORT_STR_LEN_MAX 12
