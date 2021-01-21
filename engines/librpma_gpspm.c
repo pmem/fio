@@ -1,5 +1,5 @@
 /*
- * librpma_gpspm: IO engine that uses PMDK librpma to read and write data,
+ * librpma_gpspm: IO engine that uses PMDK librpma to write data,
  *                it is a variant of librpma engine in GPSPM mode
  *
  * Copyright 2020, Intel Corporation
@@ -72,8 +72,11 @@ static int client_init(struct thread_data *td)
 	struct rpma_conn_cfg *cfg = NULL;
 	int ret;
 	
-	/* not supported readwrite = trim / randtrim / trimwrite */
-	if (td_trim(td)) {
+	/*
+	 * not supported:
+	 * - readwrite = read / trim / randread / randtrim / rw / randrw / trimwrite
+	 */
+	if (td_read(td) || td_trim(td)) {
 		log_err("Not supported mode.\n");
 		return -1;
 	}
@@ -321,11 +324,6 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 		unsigned int *io_u_index)
 {
 	GPSPMFlushResponse *flush_resp;
-
-	if (cmpl->op == RPMA_OP_READ) {
-		memcpy(io_u_index, &cmpl->op_context, sizeof(*io_u_index));
-		return 1;
-	}
 
 	if (cmpl->op != RPMA_OP_RECV)
 		return 0;
