@@ -322,6 +322,11 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 {
 	GPSPMFlushResponse *flush_resp;
 
+	if (cmpl->op == RPMA_OP_READ) {
+		memcpy(io_u_index, &cmpl->op_context, sizeof(*io_u_index));
+		return 1;
+	}
+
 	if (cmpl->op != RPMA_OP_RECV)
 		return 0;
 
