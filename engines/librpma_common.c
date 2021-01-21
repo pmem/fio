@@ -428,8 +428,12 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 
 		if (cmpl.op == RPMA_OP_SEND)
 			++ccd->op_send_completed;
-		else
+		else {
+			if (cmpl.op == RPMA_OP_RECV)
+				++ccd->op_recv_completed;
+
 			break;
+		}
 	} while (1);
 
 	if (ccd->get_io_u_index(&cmpl, &io_u_index) != 1)
@@ -441,6 +445,10 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 			io_u_index);
 		goto err;
 	}
+
+	/* make sure all SENDs are completed before exit - clean up SQ */
+	if (librpma_common_client_io_complete_all_sends(td))
+		goto err;
 
 	return FIO_Q_COMPLETED;
 
@@ -608,6 +616,8 @@ static int client_getevent_process(struct thread_data *td)
 
 	if (cmpl.op == RPMA_OP_SEND)
 		++ccd->op_send_completed;
+	else if (cmpl.op == RPMA_OP_RECV)
+		++ccd->op_recv_completed;
 
 	if ((ret = ccd->get_io_u_index(&cmpl, &io_u_index)) != 1)
 		return ret;
@@ -649,6 +659,7 @@ static int client_getevent_process(struct thread_data *td)
 int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
 		unsigned int max, const struct timespec *t)
 {
+	struct librpma_common_client_data *ccd = td->io_ops_data;
 	/* total # of completed io_us */
 	int cmpl_num_total = 0;
 	/* # of completed io_us from a single event */
@@ -673,7 +684,25 @@ int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
 			/* an error occurred */
 			return -1;
 		}
-	} while (cmpl_num_total < max);
+
+		/*
+		 * The expected max can be exceeded if CQEs for RECVs will come up
+		 * faster than CQEs for SENDs. But it is required to make sure CQEs for
+		 * SENDs will flow at least at the same pace as CQEs for RECVs.
+		 */
+	} while (cmpl_num_total < max ||
+			ccd->op_send_completed != ccd->op_recv_completed);
+
+	/*
+	 * All posted SENDs are completed and RECVs for them (responses) are
+	 * completed. This is the initial situation so the counters are reset.
+	 */
+	if (ccd->op_send_posted == ccd->op_send_completed &&
+			ccd->op_send_completed == ccd->op_recv_completed) {
+		ccd->op_send_posted = 0;
+		ccd->op_send_completed = 0;
+		ccd->op_recv_completed = 0;
+	}
 
 	return cmpl_num_total;
 }

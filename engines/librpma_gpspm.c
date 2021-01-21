@@ -235,24 +235,7 @@ static void client_cleanup(struct thread_data *td)
 	 * Note: If any operation will fail we still can send the termination
 	 * notice.
 	 */
-	while (cd->msg_curr > ccd->op_send_completed) {
-		/* get a completion */
-		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
-		if (ret == RPMA_E_NO_COMPLETION) {
-			/* lack of completion is not an error */
-			continue;
-		} else if (ret != 0) {
-			/* an error occurred */
-			librpma_td_verror(td, ret, "rpma_conn_completion_get");
-			break;
-		}
-
-		if (cmpl.op_status != IBV_WC_SUCCESS)
-			break;
-
-		if (cmpl.op == RPMA_OP_SEND)
-			++ccd->op_send_completed;
-	}
+	(void) librpma_common_client_io_complete_all_sends(td);
 
 	/* prepare the last flush message and pack it to the send buffer */
 	flush_req_size = gpspm_flush_request__get_packed_size(&Flush_req_last);
@@ -268,8 +251,13 @@ static void client_cleanup(struct thread_data *td)
 
 		/* send the flush message */
 		if ((ret = rpma_send(ccd->conn, cd->msg_mr, send_offset, flush_req_size,
-				RPMA_F_COMPLETION_ON_ERROR, NULL)))
+				RPMA_F_COMPLETION_ALWAYS, NULL)))
 			librpma_td_verror(td, ret, "rpma_send");
+
+		++ccd->op_send_posted;
+
+		/* Wait for the SEND to complete */
+		(void) librpma_common_client_io_complete_all_sends(td);
 	}
 
 	/* deregister the messaging buffer memory */
@@ -322,6 +310,8 @@ static inline int client_io_flush(struct thread_data *td,
 		librpma_td_verror(td, ret, "rpma_send");
 		return -1;
 	}
+
+	++ccd->op_send_posted;
 
 	return 0;
 }
