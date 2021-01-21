@@ -123,8 +123,10 @@ struct librpma_common_client_data {
 	struct io_u **io_us_completed;
 	int io_u_completed_nr;
 
-	/* completion counter */
+	/* SQ control. Note: All of them have to be kept in sync. */
+	uint32_t op_send_posted;
 	uint32_t op_send_completed;
+	uint32_t op_recv_completed;
 
 	librpma_common_flush_t flush;
 	librpma_common_get_io_u_index_t get_io_u_index;
@@ -187,6 +189,51 @@ static inline int librpma_common_client_io_write(struct thread_data *td,
 			(void *)(uintptr_t)io_u->index))) {
 		librpma_td_verror(td, ret, "rpma_write");
 		return -1;
+	}
+
+	return 0;
+}
+
+static inline int librpma_common_client_io_complete_all_sends(
+		struct thread_data *td)
+{
+	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct rpma_completion cmpl;
+	int ret;
+
+	while (ccd->op_send_posted != ccd->op_send_completed) {
+		/* get a completion */
+		ret = rpma_conn_completion_get(ccd->conn, &cmpl);
+		if (ret == RPMA_E_NO_COMPLETION) {
+			/* lack of completion is not an error */
+			continue;
+		} else if (ret != 0) {
+			/* an error occurred */
+			librpma_td_verror(td, ret, "rpma_conn_completion_get");
+			break;
+		}
+
+		if (cmpl.op_status != IBV_WC_SUCCESS)
+			return -1;
+
+		if (cmpl.op == RPMA_OP_SEND)
+			++ccd->op_send_completed;
+		else {
+			log_err(
+				"A completion other than RPMA_OP_SEND got during cleaning up the CQ from SENDs\n");
+			return -1;
+		}
+	}
+
+	/*
+	 * All posted SENDs are completed and RECVs for them (responses) are
+	 * completed. This is the initial situation so the counters are reset.
+	 */
+	if (ccd->op_send_posted == ccd->op_send_completed &&
+			ccd->op_send_completed == ccd->op_recv_completed) {
+		ccd->op_send_posted = 0;
+		ccd->op_send_completed = 0;
+		ccd->op_recv_completed = 0;
 	}
 
 	return 0;
