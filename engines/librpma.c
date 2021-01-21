@@ -172,7 +172,7 @@ static inline int client_io_flush(struct thread_data *td,
 	int ret;
 
 	if ((ret = rpma_flush(ccd->conn, ccd->server_mr, dst_offset, len,
-			cd->flush_type, RPMA_F_COMPLETION_ALWAYS,
+			ccd->server_mr_flush_type, RPMA_F_COMPLETION_ALWAYS,
 			(void *)(uintptr_t)last_io_u->index))) {
 		librpma_td_verror(td, ret, "rpma_flush");
 		return -1;
