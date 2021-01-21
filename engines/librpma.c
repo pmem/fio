@@ -129,7 +129,8 @@ static int client_init(struct thread_data *td)
 
 		(void) rpma_peer_cfg_delete(&pcfg);
 	} else {
-		log_info(
+		/* XXX log_info mixes with the JSON output */
+		log_err(
 			"Note: Direct Write to PMem is not supported by default nor required if you use DRAM instead of PMem on the server side (direct_write_to_pmem).\n"
 			"Remember that flushing to DRAM does not make your data persistent and may be used only for experimental purposes.\n");
 	}
