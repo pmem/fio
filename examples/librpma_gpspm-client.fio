@@ -1,10 +1,8 @@
 # Example of the librpma_gpspm client job
 
-# The engine requires some options to work correctly:
-# - create_serialize=0 forces specific initiation sequence
-
 [global]
 ioengine=librpma_gpspm_client
+create_serialize=0 # (required) forces specific initiation sequence
 serverip=[IP address the server is listening on]
 port=[base port; ports <port; port + numjobs - 1> will be used]
 thread
@@ -13,11 +11,15 @@ thread
 # a connection.
 
 [client]
-create_serialize=0
-numjobs=1
+numjobs=[# of connections]
 group_reporting=1
-iomem_align=[page size e.g. 4KiB, 2MiB, 1GiB]
+sync=[1 is the best for latency measurements]
+iomem_align=$pagesize
 iodepth=[total # of ious]
 iodepth_batch_submit=[# of ious to submit at once]
 readwrite=[read/write/randread/randwrite/readwrite/rw]
+rwmixread=[% of a mixed workload that should be reads]
 blocksize=[block size]
+ramp_time=[gives some time to stabilize the workload]
+time_based
+runtime=[run the workload for the specified period of time]
