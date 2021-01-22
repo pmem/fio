@@ -211,7 +211,7 @@ static int client_post_init(struct thread_data *td)
 static void client_cleanup(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
+	struct client_data *cd;
 	struct rpma_completion cmpl;
 	size_t flush_req_size;
 	size_t io_u_buf_off;
@@ -219,8 +219,14 @@ static void client_cleanup(struct thread_data *td)
 	void *send_ptr;
 	int ret;
 
-	if (cd == NULL)
+	if (ccd == NULL)
 		return;
+
+	cd = ccd->client_data;
+	if (cd == NULL) {
+		librpma_common_client_cleanup(td);
+		return;
+	}
 
 	/*
 	 * Make sure all SEND completions are collected ergo there are free
