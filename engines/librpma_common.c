@@ -42,7 +42,8 @@ struct fio_option librpma_common_fio_options[] = {
 		.name	= "direct_write_to_pmem",
 		.lname	= "Direct Write to PMem (via RDMA) from the remote host is possible",
 		.type	= FIO_OPT_BOOL,
-		.off1	= offsetof(struct librpma_common_options, direct_write_to_pmem),
+		.off1	= offsetof(struct librpma_common_options,
+					direct_write_to_pmem),
 		.help	= "Set to true ONLY when Direct Write to PMem from the remote host is possible (https://pmem.io/rpma/documentation/basic-direct-write-to-pmem.html)",
 		.def	= "",
 		.category = FIO_OPT_C_ENGINE,
@@ -163,7 +164,8 @@ void librpma_common_free(struct librpma_common_mem *mem)
 		free(mem->mem_ptr);
 }
 
-int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg)
+int librpma_common_client_init(struct thread_data *td,
+		struct rpma_conn_cfg *cfg)
 {
 	struct librpma_common_client_data *ccd;
 	struct librpma_common_options *o = td->eo;
@@ -213,7 +215,8 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 		goto err_free_io_u_queues;
 	}
 
-	ccd->io_us_completed = calloc(td->o.iodepth, sizeof(*ccd->io_us_completed));
+	ccd->io_us_completed = calloc(td->o.iodepth,
+			sizeof(*ccd->io_us_completed));
 	if (ccd->io_us_completed == NULL) {
 		td_verror(td, errno, "calloc");
 		goto err_free_io_u_queues;
@@ -228,7 +231,8 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	/* create a connection request */
 	if (librpma_common_td_port(o->port, td, port_td))
 		goto err_peer_delete;
-	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td, cfg, &req))) {
+	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
+			cfg, &req))) {
 		librpma_td_verror(td, ret, "rpma_conn_req_new");
 		goto err_peer_delete;
 	}
@@ -273,13 +277,15 @@ int librpma_common_client_init(struct thread_data *td, struct rpma_conn_cfg *cfg
 	}
 
 	/* get flush type of the remote node */
-	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr, &remote_flush_type))) {
+	if ((ret = rpma_mr_remote_get_flush_type(ccd->server_mr,
+			&remote_flush_type))) {
 		librpma_td_verror(td, ret, "rpma_mr_remote_get_flush_type");
 		goto err_conn_delete;
 	}
 
-	ccd->server_mr_flush_type = (remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
-			RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
+	ccd->server_mr_flush_type =
+		(remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
+		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
 
 	td->io_ops_data = ccd;
 
@@ -391,13 +397,14 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
-	unsigned int io_u_index;
+	unsigned io_u_index;
 	int ret;
 
 	/* execute io_u */
 	if (io_u->ddir == DDIR_READ) {
 		/* post an RDMA read operation */
-		if (librpma_common_client_io_read(td, io_u, RPMA_F_COMPLETION_ALWAYS))
+		if (librpma_common_client_io_read(td, io_u,
+				RPMA_F_COMPLETION_ALWAYS))
 			goto err;
 	} else if (io_u->ddir == DDIR_WRITE) {
 		/* post an RDMA write operation */
@@ -493,7 +500,8 @@ int librpma_common_client_commit(struct thread_data *td)
 		struct io_u *io_u = ccd->io_us_queued[i];
 
 		if (io_u->ddir == DDIR_READ) {
-			if (i + 1 == ccd->io_u_queued_nr || ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
+			if (i + 1 == ccd->io_u_queued_nr ||
+			    ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
 				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
 			if (librpma_common_client_io_read(td, io_u, flags))
@@ -514,19 +522,20 @@ int librpma_common_client_commit(struct thread_data *td)
 			flush_len += io_u->xfer_buflen;
 
 			/*
-			 * if io_u's are random the rpma_flush is required after
-			 * each one of them
+			 * if io_u's are random the rpma_flush is required
+			 * after each one of them
 			 */
 			if (!td_random(td)) {
-				/* when the io_u's are sequential and
+				/*
+				 * When the io_u's are sequential and
 				 * the current io_u is not the last one and
 				 * the next one is also a write operation
 				 * the flush can be postponed by one io_u and
 				 * cover all of them which build a continuous
-				 * sequence
+				 * sequence.
 				 */
-				if (i + 1 < ccd->io_u_queued_nr &&
-						ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
+				if ((i + 1 < ccd->io_u_queued_nr) &&
+				    (ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE))
 					continue;
 			}
 
@@ -564,7 +573,8 @@ int librpma_common_client_commit(struct thread_data *td)
 
 		/*
 		 * FIO says:
-		 * If an engine has the commit hook it has to call io_u_queued() itself.
+		 * If an engine has the commit hook
+		 * it has to call io_u_queued() itself.
 		 */
 		io_u_queued(td, io_u);
 	}
@@ -674,7 +684,8 @@ int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
 			if (cmpl_num_total >= min)
 				break;
 
-			/* To reduce CPU consumption one can use
+			/*
+			 * To reduce CPU consumption one can use
 			 * the rpma_conn_completion_wait() function.
 			 * Note this greatly increase the latency
 			 * and make the results less stable.
@@ -873,7 +884,8 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 
 	/* verify size of the memory region's descriptor */
 	if (mr_desc_size > DESCRIPTOR_MAX_SIZE) {
-		log_err("size of the memory region's descriptor is too big (max=%i)\n",
+		log_err(
+			"size of the memory region's descriptor is too big (max=%i)\n",
 			DESCRIPTOR_MAX_SIZE);
 		goto err_mr_dereg;
 	}
@@ -892,7 +904,8 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 
 		/* verify whether iodepth fits into uint16_t */
 		if (max_msg_num > UINT16_MAX) {
-			log_err("fio: iodepth too big (%u > %u)\n", max_msg_num, UINT16_MAX);
+			log_err("fio: iodepth too big (%u > %u)\n",
+				max_msg_num, UINT16_MAX);
 			return -1;
 		}
 
@@ -915,7 +928,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 		goto err_req_delete;
 
 	/* accept the connection request and obtain the connection object */
-	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn))){
+	if ((ret = rpma_conn_req_connect(&conn_req, &pdata, &conn))) {
 		librpma_td_verror(td, ret, "rpma_conn_req_connect");
 		goto err_req_delete;
 	}

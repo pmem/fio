@@ -28,7 +28,7 @@
 #define RECV_OFFSET (SEND_OFFSET + MAX_MSG_SIZE)
 
 #define GPSPM_FLUSH_REQUEST__LAST \
-	{ PROTOBUF_C_MESSAGE_INIT (&gpspm_flush_request__descriptor), 0, 0, 0 }
+	{ PROTOBUF_C_MESSAGE_INIT(&gpspm_flush_request__descriptor), 0, 0, 0 }
 
 /*
  * 'Flush_req_last' is the last flush request
@@ -45,7 +45,7 @@ static const GPSPMFlushRequest Flush_req_last = GPSPM_FLUSH_REQUEST__LAST;
 
 /* get next io_u message buffer in the round-robin fashion */
 #define IO_U_NEXT_BUF_OFF_CLIENT(cd) \
-    (IO_U_BUF_LEN * ((cd->msg_curr++) % cd->msg_num))
+	(IO_U_BUF_LEN * ((cd->msg_curr++) % cd->msg_num))
 
 struct client_data {
 	/* memory for sending and receiving buffered */
@@ -71,10 +71,11 @@ static int client_init(struct thread_data *td)
 	uint32_t write_num;
 	struct rpma_conn_cfg *cfg = NULL;
 	int ret;
-	
+
 	/*
 	 * not supported:
-	 * - readwrite = read / trim / randread / randtrim / rw / randrw / trimwrite
+	 * - readwrite = read / trim / randread / randtrim /
+	 *               / rw / randrw / trimwrite
 	 */
 	if (td_read(td) || td_trim(td)) {
 		log_err("Not supported mode.\n");
@@ -107,7 +108,8 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			cd->msg_num = LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
+			cd->msg_num = LIBRPMA_CEIL(td->o.iodepth,
+					td->o.iodepth_batch);
 		}
 	}
 
@@ -121,8 +123,8 @@ static int client_init(struct thread_data *td)
 	 * Calculate the required queue sizes where:
 	 * - the send queue (SQ) has to be big enough to accommodate
 	 *   all io_us (WRITEs) and all flush requests (SENDs)
-	 * - the receive queue (RQ) has to be big enough to accommodate all flush
-	 *   responses (RECVs)
+	 * - the receive queue (RQ) has to be big enough to accommodate
+	 *   all flush responses (RECVs)
 	 * - the completion queue (CQ) has to be big enough to accommodate all
 	 *   success and error completions (sq_size + rq_size)
 	 */
@@ -138,7 +140,7 @@ static int client_init(struct thread_data *td)
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
 		goto err_cfg_delete;
 	}
-	
+
 	if (librpma_common_client_init(td, cfg))
 		goto err_cfg_delete;
 
@@ -249,8 +251,9 @@ static void client_cleanup(struct thread_data *td)
 		(void) gpspm_flush_request__pack(&Flush_req_last, send_ptr);
 
 		/* send the flush message */
-		if ((ret = rpma_send(ccd->conn, cd->msg_mr, send_offset, flush_req_size,
-				RPMA_F_COMPLETION_ALWAYS, NULL)))
+		if ((ret = rpma_send(ccd->conn, cd->msg_mr, send_offset,
+				flush_req_size, RPMA_F_COMPLETION_ALWAYS,
+				NULL)))
 			librpma_td_verror(td, ret, "rpma_send");
 
 		++ccd->op_send_posted;
@@ -438,7 +441,8 @@ static int server_post_init(struct thread_data *td)
 	/*
 	 * XXX
 	 * Each io_u message buffer contains recv and send messages.
-	 * Aligning each of those buffers may potentially give some performance benefits.
+	 * Aligning each of those buffers may potentially give
+	 * some performance benefits.
 	 */
 	io_u_buflen = td_max_bs(td);
 
@@ -458,7 +462,8 @@ static int server_post_init(struct thread_data *td)
 			(unsigned long long)td->o.iodepth;
 
 	if ((ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
-			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV, &sd->msg_mr))) {
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
+			&sd->msg_mr))) {
 		librpma_td_verror(td, ret, "rpma_mr_reg");
 		return -1;
 	}
@@ -489,7 +494,8 @@ static void server_cleanup(struct thread_data *td)
 	librpma_common_server_cleanup(td);
 }
 
-static int prepare_connection(struct thread_data *td, struct rpma_conn_req *conn_req)
+static int prepare_connection(struct thread_data *td,
+		struct rpma_conn_req *conn_req)
 {
 	struct librpma_common_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
@@ -530,10 +536,10 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 	 * Calculate the required queue sizes where:
 	 * - the send queue (SQ) has to be big enough to accommodate
 	 *   all possible flush requests (SENDs)
-	 * - the receive queue (RQ) has to be big enough to accommodate all flush
-	 *   responses (RECVs)
-	 * - the completion queue (CQ) has to be big enough to accommodate all
-	 *   success and error completions (sq_size + rq_size)
+	 * - the receive queue (RQ) has to be big enough to accommodate
+	 *   all flush responses (RECVs)
+	 * - the completion queue (CQ) has to be big enough to accommodate
+	 *   all success and error completions (sq_size + rq_size)
 	 */
 	if ((ret = rpma_conn_cfg_set_sq_size(cfg, max_msg_num))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
@@ -556,7 +562,8 @@ err_cfg_delete:
 	return ret;
 }
 
-static int server_qe_process(struct thread_data *td, struct rpma_completion *cmpl)
+static int server_qe_process(struct thread_data *td,
+		struct rpma_completion *cmpl)
 {
 	struct librpma_common_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
@@ -581,7 +588,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	recv_buff_ptr = sd->orig_buffer_aligned + recv_buff_offset;
 
 	/* unpack a flush request from the received buffer */
-	flush_req = gpspm_flush_request__unpack(NULL, cmpl->byte_len, recv_buff_ptr);
+	flush_req = gpspm_flush_request__unpack(NULL, cmpl->byte_len,
+			recv_buff_ptr);
 	if (flush_req == NULL) {
 		log_err("cannot unpack the flush request buffer\n");
 		goto err_terminate;
@@ -600,7 +608,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	}
 
 	/* initiate the next receive operation */
-	if ((ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset, MAX_MSG_SIZE,
+	if ((ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset,
+			MAX_MSG_SIZE,
 			(const void *)(uintptr_t)msg_index))) {
 		librpma_td_verror(td, ret, "rpma_recv");
 		goto err_free_unpacked;
@@ -619,8 +628,8 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	(void) gpspm_flush_response__pack(&flush_resp, send_buff_ptr);
 
 	/* send the flush response */
-	if ((ret = rpma_send(csd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
-			RPMA_F_COMPLETION_ALWAYS, NULL))) {
+	if ((ret = rpma_send(csd->conn, sd->msg_mr, send_buff_offset,
+			flush_resp_size, RPMA_F_COMPLETION_ALWAYS, NULL))) {
 		librpma_td_verror(td, ret, "rpma_send");
 		goto err_free_unpacked;
 	}
@@ -659,9 +668,11 @@ static inline int server_queue_process(struct thread_data *td)
 
 	/* progress the queue */
 	for (i = 0; i < sd->msg_queued_nr - qes_to_process; ++i) {
-		memcpy(&sd->msgs_queued[i], &sd->msgs_queued[qes_to_process + i],
-				sizeof(sd->msgs_queued[i]));
+		memcpy(&sd->msgs_queued[i],
+			&sd->msgs_queued[qes_to_process + i],
+			sizeof(sd->msgs_queued[i]));
 	}
+
 	sd->msg_queued_nr -= qes_to_process;
 
 	return 0;
@@ -725,7 +736,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.invalidate		= librpma_common_file_nop,
 	.cleanup		= server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
-				  FIO_NOSTATS,
+					FIO_NOSTATS,
 	.options		= librpma_common_fio_options,
 	.option_struct_size	= sizeof(struct librpma_common_options),
 };

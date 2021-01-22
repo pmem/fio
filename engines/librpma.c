@@ -70,8 +70,8 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			sq_size = td->o.iodepth +
-				LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
+			sq_size = td->o.iodepth + LIBRPMA_CEIL(td->o.iodepth,
+					td->o.iodepth_batch);
 		}
 	} else {
 		/* TD_DDIR_READ only */
@@ -118,12 +118,14 @@ static int client_init(struct thread_data *td)
 		}
 
 		if ((ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true))) {
-			librpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
+			librpma_td_verror(td, ret,
+				"rpma_peer_cfg_set_direct_write_to_pmem");
 			goto err_cleanup_common;
 		}
 
 		if ((ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg))) {
-			librpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
+			librpma_td_verror(td, ret,
+				"rpma_conn_apply_remote_peer_cfg");
 			goto err_cleanup_common;
 		}
 
@@ -234,7 +236,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.invalidate		= librpma_common_file_nop,
 	.cleanup		= librpma_common_server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
-				  FIO_NOSTATS,
+					FIO_NOSTATS,
 	.options		= librpma_common_fio_options,
 	.option_struct_size	= sizeof(struct librpma_common_options),
 };
