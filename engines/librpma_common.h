@@ -41,7 +41,7 @@ struct librpma_common_options {
 	/* base server listening port */
 	char *port;
 	/* Direct Write to PMem is possible */
-	unsigned int direct_write_to_pmem;
+	unsigned direct_write_to_pmem;
 };
 
 extern struct fio_option librpma_common_fio_options[];
@@ -85,7 +85,7 @@ void librpma_common_free(struct librpma_common_mem *mem);
 
 typedef int (*librpma_common_flush_t)(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
-		unsigned long long int len);
+		unsigned long long len);
 
 /*
  * RETURN VALUE
@@ -94,7 +94,7 @@ typedef int (*librpma_common_flush_t)(struct thread_data *td,
  * - (-1) - on error
  */
 typedef int (*librpma_common_get_io_u_index_t)(struct rpma_completion *cmpl,
-		unsigned int *io_u_index);
+		unsigned *io_u_index);
 
 struct librpma_common_client_data {
 	struct rpma_peer *peer;
@@ -148,8 +148,8 @@ enum fio_q_status librpma_common_client_queue(struct thread_data *td,
 
 int librpma_common_client_commit(struct thread_data *td);
 
-int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
-		unsigned int max, const struct timespec *t);
+int librpma_common_client_getevents(struct thread_data *td, unsigned min,
+		unsigned max, const struct timespec *t);
 
 struct io_u *librpma_common_client_event(struct thread_data *td, int event);
 

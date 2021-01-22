@@ -21,15 +21,15 @@
 
 static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
-		unsigned long long int len);
+		unsigned long long len);
 
 static int client_get_io_u_index(struct rpma_completion *cmpl,
-		unsigned int *io_u_index);
+		unsigned *io_u_index);
 
 static int client_init(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd;
-	unsigned int sq_size;
+	unsigned sq_size;
 	uint32_t cq_size;
 	struct rpma_conn_cfg *cfg = NULL;
 	struct rpma_peer_cfg *pcfg = NULL;
@@ -70,8 +70,8 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			sq_size = td->o.iodepth +
-				LIBRPMA_CEIL(td->o.iodepth, td->o.iodepth_batch);
+			sq_size = td->o.iodepth + LIBRPMA_CEIL(td->o.iodepth,
+					td->o.iodepth_batch);
 		}
 	} else {
 		/* TD_DDIR_READ only */
@@ -118,12 +118,14 @@ static int client_init(struct thread_data *td)
 		}
 
 		if ((ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true))) {
-			librpma_td_verror(td, ret, "rpma_peer_cfg_set_direct_write_to_pmem");
+			librpma_td_verror(td, ret,
+				"rpma_peer_cfg_set_direct_write_to_pmem");
 			goto err_cleanup_common;
 		}
 
 		if ((ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg))) {
-			librpma_td_verror(td, ret, "rpma_conn_apply_remote_peer_cfg");
+			librpma_td_verror(td, ret,
+				"rpma_conn_apply_remote_peer_cfg");
 			goto err_cleanup_common;
 		}
 
@@ -165,7 +167,7 @@ static void client_cleanup(struct thread_data *td)
 
 static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
-		unsigned long long int len)
+		unsigned long long len)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 	size_t dst_offset = first_io_u->offset;
@@ -182,7 +184,7 @@ static inline int client_io_flush(struct thread_data *td,
 }
 
 static int client_get_io_u_index(struct rpma_completion *cmpl,
-		unsigned int *io_u_index)
+		unsigned *io_u_index)
 {
 	memcpy(io_u_index, &cmpl->op_context, sizeof(*io_u_index));
 
@@ -231,7 +233,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.invalidate		= librpma_common_file_nop,
 	.cleanup		= librpma_common_server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
-				  FIO_NOSTATS,
+					FIO_NOSTATS,
 	.options		= librpma_common_fio_options,
 	.option_struct_size	= sizeof(struct librpma_common_options),
 };
