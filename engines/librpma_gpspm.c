@@ -599,6 +599,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 		/*
 		 * This is the last message - the client is done.
 		 */
+		gpspm_flush_request__free_unpacked(flush_req, NULL);
 		td->done = true;
 		return 0;
 	}
@@ -607,7 +608,7 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 	if ((ret = rpma_recv(csd->conn, sd->msg_mr, recv_buff_offset, MAX_MSG_SIZE,
 			(const void *)(uintptr_t)msg_index))) {
 		librpma_td_verror(td, ret, "rpma_recv");
-		goto err_terminate;
+		goto err_free_unpacked;
 	}
 
 	/* prepare a flush response and pack it to a send buffer */
@@ -617,21 +618,25 @@ static int server_qe_process(struct thread_data *td, struct rpma_completion *cmp
 		log_err(
 			"Size of the packed flush response is bigger than the available space of the send buffer (%"
 			PRIu64 " > %i\n", flush_resp_size, MAX_MSG_SIZE);
-		goto err_terminate;
+		goto err_free_unpacked;
 	}
 
 	(void) gpspm_flush_response__pack(&flush_resp, send_buff_ptr);
-	gpspm_flush_request__free_unpacked(flush_req, NULL);
 
 	/* send the flush response */
 	if ((ret = rpma_send(csd->conn, sd->msg_mr, send_buff_offset, flush_resp_size,
 			RPMA_F_COMPLETION_ALWAYS, NULL))) {
 		librpma_td_verror(td, ret, "rpma_send");
-		goto err_terminate;
+		goto err_free_unpacked;
 	}
 	--sd->msg_sqe_available;
 
+	gpspm_flush_request__free_unpacked(flush_req, NULL);
+
 	return 0;
+
+err_free_unpacked:
+	gpspm_flush_request__free_unpacked(flush_req, NULL);
 
 err_terminate:
 	td->terminate = true;
