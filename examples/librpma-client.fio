@@ -3,7 +3,7 @@
 [global]
 ioengine=librpma_client
 create_serialize=0 # (required) forces specific initiation sequence
-serverip=[IP address the server is listening on] 
+serverip=[IP address the server is listening on]
 port=[port the server is listening on]
 thread
 
