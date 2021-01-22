@@ -158,6 +158,9 @@ static void client_cleanup(struct thread_data *td)
 {
 	struct librpma_common_client_data *ccd = td->io_ops_data;
 
+	if (ccd == NULL)
+		return;
+
 	free(ccd->client_data);
 
 	librpma_common_client_cleanup(td);
