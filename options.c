@@ -1877,9 +1877,9 @@ struct fio_option fio_options[FIO_MAX_OPTS] = {
 			    .help = "RDMA IO engine",
 			  },
 #endif
-#ifdef CONFIG_LIBRPMA
-			  { .ival = "librpma",
-			    .help = "librpma IO engine",
+#ifdef CONFIG_LIBRPMA_APM
+			  { .ival = "librpma_apm",
+			    .help = "librpma IO engine in APM mode",
 			  },
 #endif
 #ifdef CONFIG_LIBRPMA_GPSPM

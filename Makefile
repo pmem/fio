@@ -99,11 +99,11 @@ ifdef CONFIG_RDMA
   rdma_LIBS = -libverbs -lrdmacm
   ENGINES += rdma
 endif
-ifdef CONFIG_LIBRPMA
-  librpma_SRCS = engines/librpma.c
+ifdef CONFIG_LIBRPMA_APM
+  librpma_apm_SRCS = engines/librpma_apm.c
   librpma_common_SRCS = engines/librpma_common.c
   librpma_LIBS = -lrpma -lpmem
-  ENGINES += librpma
+  ENGINES += librpma_apm
 endif
 ifdef CONFIG_LIBRPMA_GPSPM
   librpma_gpspm_SRCS = engines/librpma_gpspm.c engines/librpma_gpspm_flush.pb-c.c
