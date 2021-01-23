@@ -15,8 +15,6 @@
 
 #include "librpma_common.h"
 
-#include <librpma.h>
-
 /* client side implementation */
 
 static inline int client_io_flush(struct thread_data *td,
@@ -70,7 +68,7 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			sq_size = td->o.iodepth + LIBRPMA_CEIL(td->o.iodepth,
+			sq_size = td->o.iodepth + LIBRPMA_COMMON_CEIL(td->o.iodepth,
 					td->o.iodepth_batch);
 		}
 	} else {
