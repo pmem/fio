@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  */
 
-#include "librpma_common.h"
+#include "librpma_fio.h"
 
 /* client side implementation */
 
@@ -26,7 +26,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 
 static int client_init(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd;
+	struct librpma_fio_client_data *ccd;
 	unsigned int sq_size;
 	uint32_t cq_size;
 	struct rpma_conn_cfg *cfg = NULL;
@@ -68,7 +68,7 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			sq_size = td->o.iodepth + LIBRPMA_COMMON_CEIL(td->o.iodepth,
+			sq_size = td->o.iodepth + LIBRPMA_FIO_CEIL(td->o.iodepth,
 					td->o.iodepth_batch);
 		}
 	} else {
@@ -97,7 +97,7 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 
-	if (librpma_common_client_init(td, cfg))
+	if (librpma_fio_client_init(td, cfg))
 		goto err_cfg_delete;
 
 	ccd = td->io_ops_data;
@@ -146,7 +146,7 @@ static int client_init(struct thread_data *td)
 	return 0;
 
 err_cleanup_common:
-	librpma_common_client_cleanup(td);
+	librpma_fio_client_cleanup(td);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
@@ -156,21 +156,21 @@ err_cfg_delete:
 
 static void client_cleanup(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 
 	if (ccd == NULL)
 		return;
 
 	free(ccd->client_data);
 
-	librpma_common_client_cleanup(td);
+	librpma_fio_client_cleanup(td);
 }
 
 static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	size_t dst_offset = first_io_u->offset;
 	int ret;
 
@@ -196,27 +196,27 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.name			= "librpma_client",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= client_init,
-	.post_init		= librpma_common_client_post_init,
-	.get_file_size		= librpma_common_client_get_file_size,
-	.open_file		= librpma_common_file_nop,
-	.queue			= librpma_common_client_queue,
-	.commit			= librpma_common_client_commit,
-	.getevents		= librpma_common_client_getevents,
-	.event			= librpma_common_client_event,
-	.errdetails		= librpma_common_client_errdetails,
-	.close_file		= librpma_common_file_nop,
+	.post_init		= librpma_fio_client_post_init,
+	.get_file_size		= librpma_fio_client_get_file_size,
+	.open_file		= librpma_fio_file_nop,
+	.queue			= librpma_fio_client_queue,
+	.commit			= librpma_fio_client_commit,
+	.getevents		= librpma_fio_client_getevents,
+	.event			= librpma_fio_client_event,
+	.errdetails		= librpma_fio_client_errdetails,
+	.close_file		= librpma_fio_file_nop,
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= librpma_common_fio_options,
-	.option_struct_size	= sizeof(struct librpma_common_options),
+	.options		= librpma_fio_options,
+	.option_struct_size	= sizeof(struct librpma_fio_private_options),
 };
 
 /* server side implementation */
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
-	return librpma_common_server_open_file(td, f, NULL);
+	return librpma_fio_server_open_file(td, f, NULL);
 }
 
 static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
@@ -227,16 +227,16 @@ static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_server",
 	.version		= FIO_IOOPS_VERSION,
-	.init			= librpma_common_server_init,
+	.init			= librpma_fio_server_init,
 	.open_file		= server_open_file,
-	.close_file		= librpma_common_server_close_file,
+	.close_file		= librpma_fio_server_close_file,
 	.queue			= server_queue,
-	.invalidate		= librpma_common_file_nop,
-	.cleanup		= librpma_common_server_cleanup,
+	.invalidate		= librpma_fio_file_nop,
+	.cleanup		= librpma_fio_server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 					FIO_NOSTATS,
-	.options		= librpma_common_fio_options,
-	.option_struct_size	= sizeof(struct librpma_common_options),
+	.options		= librpma_fio_options,
+	.option_struct_size	= sizeof(struct librpma_fio_private_options),
 };
 
 /* register both engines */
