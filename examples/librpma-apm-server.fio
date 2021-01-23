@@ -1,7 +1,7 @@
-# Example of the librpma server job
+# Example of the librpma_apm server job
 
 [global]
-ioengine=librpma_server
+ioengine=librpma_apm_server
 create_serialize=0 # (required) forces specific initiation sequence
 kb_base=1000 # turn on the straight units handling (non-compatibility mode)
 serverip=[IP address to listen on]
