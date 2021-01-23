@@ -1,5 +1,5 @@
 /*
- * librpma_common: librpma and librpma_gpspm engine's common.
+ * librpma_fio: librpma and librpma_gpspm engine's common.
  *
  * Copyright 2021, Intel Corporation
  *
@@ -13,16 +13,16 @@
  * GNU General Public License for more details.
  */
 
-#include "librpma_common.h"
+#include "librpma_fio.h"
 
 #include <libpmem.h>
 
-struct fio_option librpma_common_fio_options[] = {
+struct fio_option librpma_fio_options[] = {
 	{
 		.name	= "serverip",
 		.lname	= "rpma_server_ip",
 		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_options, server_ip),
+		.off1	= offsetof(struct librpma_fio_private_options, server_ip),
 		.help	= "IP address the server is listening on",
 		.def	= "",
 		.category = FIO_OPT_C_ENGINE,
@@ -32,7 +32,7 @@ struct fio_option librpma_common_fio_options[] = {
 		.name	= "port",
 		.lname	= "rpma_server port",
 		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_common_options, port),
+		.off1	= offsetof(struct librpma_fio_private_options, port),
 		.help	= "port the server is listening on",
 		.def	= "7204",
 		.category = FIO_OPT_C_ENGINE,
@@ -42,7 +42,7 @@ struct fio_option librpma_common_fio_options[] = {
 		.name	= "direct_write_to_pmem",
 		.lname	= "Direct Write to PMem (via RDMA) from the remote host is possible",
 		.type	= FIO_OPT_BOOL,
-		.off1	= offsetof(struct librpma_common_options,
+		.off1	= offsetof(struct librpma_fio_private_options,
 					direct_write_to_pmem),
 		.help	= "Set to true ONLY when Direct Write to PMem from the remote host is possible (https://pmem.io/rpma/documentation/basic-direct-write-to-pmem.html)",
 		.def	= "",
@@ -54,7 +54,7 @@ struct fio_option librpma_common_fio_options[] = {
 	},
 };
 
-int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
+int librpma_fio_td_port(const char *port_base_str, struct thread_data *td,
 		char *port_out)
 {
 	unsigned long int port_ul = strtoul(port_base_str, NULL, 10);
@@ -74,13 +74,13 @@ int librpma_common_td_port(const char *port_base_str, struct thread_data *td,
 	}
 
 	port_new = port_ul;
-	snprintf(port_out, LIBRPMA_COMMON_PORT_STR_LEN_MAX - 1, "%u", port_new);
+	snprintf(port_out, LIBRPMA_FIO_PORT_STR_LEN_MAX - 1, "%u", port_new);
 
 	return 0;
 }
 
-char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
-	struct librpma_common_mem *mem)
+char *librpma_fio_allocate_dram(struct thread_data *td, size_t size,
+	struct librpma_fio_mem *mem)
 {
 	char *mem_ptr = NULL;
 	int ret;
@@ -97,8 +97,8 @@ char *librpma_common_allocate_dram(struct thread_data *td, size_t size,
 	return mem_ptr;
 }
 
-char *librpma_common_allocate_pmem(struct thread_data *td, const char *filename,
-		size_t size, struct librpma_common_mem *mem)
+char *librpma_fio_allocate_pmem(struct thread_data *td, const char *filename,
+		size_t size, struct librpma_fio_mem *mem)
 {
 	size_t size_mmap = 0;
 	char *mem_ptr = NULL;
@@ -156,7 +156,7 @@ err_unmap:
 	return NULL;
 }
 
-void librpma_common_free(struct librpma_common_mem *mem)
+void librpma_fio_free(struct librpma_fio_mem *mem)
 {
 	if (mem->size_mmap)
 		(void) pmem_unmap(mem->mem_ptr, mem->size_mmap);
@@ -164,13 +164,13 @@ void librpma_common_free(struct librpma_common_mem *mem)
 		free(mem->mem_ptr);
 }
 
-int librpma_common_client_init(struct thread_data *td,
+int librpma_fio_client_init(struct thread_data *td,
 		struct rpma_conn_cfg *cfg)
 {
-	struct librpma_common_client_data *ccd;
-	struct librpma_common_options *o = td->eo;
+	struct librpma_fio_client_data *ccd;
+	struct librpma_fio_private_options *o = td->eo;
 	struct ibv_context *dev = NULL;
-	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
+	char port_td[LIBRPMA_FIO_PORT_STR_LEN_MAX];
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event event;
 	struct rpma_conn_private_data pdata;
@@ -229,7 +229,7 @@ int librpma_common_client_init(struct thread_data *td,
 	}
 
 	/* create a connection request */
-	if (librpma_common_td_port(o->port, td, port_td))
+	if (librpma_fio_td_port(o->port, td, port_td))
 		goto err_peer_delete;
 	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
 			cfg, &req))) {
@@ -312,9 +312,9 @@ err_free_ccd:
 	return -1;
 }
 
-void librpma_common_client_cleanup(struct thread_data *td)
+void librpma_fio_client_cleanup(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	enum rpma_conn_event ev;
 	int ret;
 	/* delete the iou's memory registration */
@@ -347,15 +347,15 @@ void librpma_common_client_cleanup(struct thread_data *td)
 	free(ccd);
 }
 
-int librpma_common_file_nop(struct thread_data *td, struct fio_file *f)
+int librpma_fio_file_nop(struct thread_data *td, struct fio_file *f)
 {
 	/* NOP */
 	return 0;
 }
 
-int librpma_common_client_post_init(struct thread_data *td)
+int librpma_fio_client_post_init(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd =  td->io_ops_data;
+	struct librpma_fio_client_data *ccd =  td->io_ops_data;
 	size_t io_us_size;
 	int ret;
 
@@ -381,10 +381,10 @@ int librpma_common_client_post_init(struct thread_data *td)
 	return ret;
 }
 
-int librpma_common_client_get_file_size(struct thread_data *td,
+int librpma_fio_client_get_file_size(struct thread_data *td,
 		struct fio_file *f)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 
 	f->real_file_size = ccd->ws_size;
 	fio_file_set_size_known(f);
@@ -395,7 +395,7 @@ int librpma_common_client_get_file_size(struct thread_data *td,
 static enum fio_q_status client_queue_sync(struct thread_data *td,
 		struct io_u *io_u)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
 	unsigned io_u_index;
 	int ret;
@@ -403,12 +403,12 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	/* execute io_u */
 	if (io_u->ddir == DDIR_READ) {
 		/* post an RDMA read operation */
-		if (librpma_common_client_io_read(td, io_u,
+		if (librpma_fio_client_io_read(td, io_u,
 				RPMA_F_COMPLETION_ALWAYS))
 			goto err;
 	} else if (io_u->ddir == DDIR_WRITE) {
 		/* post an RDMA write operation */
-		if (librpma_common_client_io_write(td, io_u))
+		if (librpma_fio_client_io_write(td, io_u))
 			goto err;
 		if (ccd->flush(td, io_u, io_u, io_u->xfer_buflen))
 			goto err;
@@ -454,7 +454,7 @@ static enum fio_q_status client_queue_sync(struct thread_data *td,
 	}
 
 	/* make sure all SENDs are completed before exit - clean up SQ */
-	if (librpma_common_client_io_complete_all_sends(td))
+	if (librpma_fio_client_io_complete_all_sends(td))
 		goto err;
 
 	return FIO_Q_COMPLETED;
@@ -464,10 +464,10 @@ err:
 	return FIO_Q_COMPLETED;
 }
 
-enum fio_q_status librpma_common_client_queue(struct thread_data *td,
+enum fio_q_status librpma_fio_client_queue(struct thread_data *td,
 		struct io_u *io_u)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 
 	if (ccd->io_u_queued_nr == (int)td->o.iodepth)
 		return FIO_Q_BUSY;
@@ -482,9 +482,9 @@ enum fio_q_status librpma_common_client_queue(struct thread_data *td,
 	return FIO_Q_QUEUED;
 }
 
-int librpma_common_client_commit(struct thread_data *td)
+int librpma_fio_client_commit(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	int flags = RPMA_F_COMPLETION_ON_ERROR;
 	struct timespec now;
 	bool fill_time;
@@ -504,11 +504,11 @@ int librpma_common_client_commit(struct thread_data *td)
 			    ccd->io_us_queued[i + 1]->ddir == DDIR_WRITE)
 				flags = RPMA_F_COMPLETION_ALWAYS;
 			/* post an RDMA read operation */
-			if (librpma_common_client_io_read(td, io_u, flags))
+			if (librpma_fio_client_io_read(td, io_u, flags))
 				return -1;
 		} else if (io_u->ddir == DDIR_WRITE) {
 			/* post an RDMA write operation */
-			if (librpma_common_client_io_write(td, io_u))
+			if (librpma_fio_client_io_write(td, io_u))
 				return -1;
 
 			/* cache the first io_u in the sequence */
@@ -594,7 +594,7 @@ int librpma_common_client_commit(struct thread_data *td)
  */
 static int client_getevent_process(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct rpma_completion cmpl;
 	/* io_u->index of completed io_u (cmpl.op_context) */
 	unsigned int io_u_index;
@@ -666,10 +666,10 @@ static int client_getevent_process(struct thread_data *td)
 	return cmpl_num;
 }
 
-int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
+int librpma_fio_client_getevents(struct thread_data *td, unsigned int min,
 		unsigned int max, const struct timespec *t)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	/* total # of completed io_us */
 	int cmpl_num_total = 0;
 	/* # of completed io_us from a single event */
@@ -718,9 +718,9 @@ int librpma_common_client_getevents(struct thread_data *td, unsigned int min,
 	return cmpl_num_total;
 }
 
-struct io_u *librpma_common_client_event(struct thread_data *td, int event)
+struct io_u *librpma_fio_client_event(struct thread_data *td, int event)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct io_u *io_u;
 	int i;
 
@@ -737,7 +737,7 @@ struct io_u *librpma_common_client_event(struct thread_data *td, int event)
 	return io_u;
 }
 
-char *librpma_common_client_errdetails(struct io_u *io_u)
+char *librpma_fio_client_errdetails(struct io_u *io_u)
 {
 	/* get the string representation of an error */
 	enum ibv_wc_status status = io_u->error;
@@ -754,10 +754,10 @@ char *librpma_common_client_errdetails(struct io_u *io_u)
 	return details;
 }
 
-int librpma_common_server_init(struct thread_data *td)
+int librpma_fio_server_init(struct thread_data *td)
 {
-	struct librpma_common_options *o = td->eo;
-	struct librpma_common_server_data *csd;
+	struct librpma_fio_private_options *o = td->eo;
+	struct librpma_fio_server_data *csd;
 	struct ibv_context *dev = NULL;
 	enum rpma_log_level log_level_aux = RPMA_LOG_LEVEL_WARNING;
 	int ret = -1;
@@ -803,9 +803,9 @@ err_free_csd:
 	return -1;
 }
 
-void librpma_common_server_cleanup(struct thread_data *td)
+void librpma_fio_server_cleanup(struct thread_data *td)
 {
-	struct librpma_common_server_data *csd =  td->io_ops_data;
+	struct librpma_fio_server_data *csd =  td->io_ops_data;
 	int ret;
 
 	if (csd == NULL)
@@ -818,19 +818,19 @@ void librpma_common_server_cleanup(struct thread_data *td)
 	free(csd);
 }
 
-int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
+int librpma_fio_server_open_file(struct thread_data *td, struct fio_file *f,
 		struct rpma_conn_cfg *cfg)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
-	struct librpma_common_options *o = td->eo;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
+	struct librpma_fio_private_options *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
-	struct librpma_common_workspace ws;
+	struct librpma_fio_workspace ws;
 	struct rpma_conn_private_data pdata;
 	uint32_t max_msg_num;
 	struct rpma_conn_req *conn_req;
 	struct rpma_conn *conn;
 	struct rpma_mr_local *mr;
-	char port_td[LIBRPMA_COMMON_PORT_STR_LEN_MAX];
+	char port_td[LIBRPMA_FIO_PORT_STR_LEN_MAX];
 	struct rpma_ep *ep;
 	size_t mem_size = td->o.size;
 	size_t mr_desc_size;
@@ -844,7 +844,7 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* start a listening endpoint at addr:port */
-	if (librpma_common_td_port(o->port, td, port_td))
+	if (librpma_fio_td_port(o->port, td, port_td))
 		return -1;
 
 	if ((ret = rpma_ep_listen(csd->peer, o->server_ip, port_td, &ep))) {
@@ -854,11 +854,11 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 
 	if (strcmp(f->file_name, "malloc") == 0) {
 		/* allocation from DRAM using posix_memalign() */
-		ws_ptr = librpma_common_allocate_dram(td, mem_size, &csd->mem);
+		ws_ptr = librpma_fio_allocate_dram(td, mem_size, &csd->mem);
 		usage_mem_type = RPMA_MR_USAGE_FLUSH_TYPE_VISIBILITY;
 	} else {
 		/* allocation from PMEM using pmem_map_file() */
-		ws_ptr = librpma_common_allocate_pmem(td, f->file_name,
+		ws_ptr = librpma_fio_allocate_pmem(td, f->file_name,
 				mem_size, &csd->mem);
 		usage_mem_type = RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT;
 	}
@@ -883,10 +883,10 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* verify size of the memory region's descriptor */
-	if (mr_desc_size > LIBRPMA_COMMON_DESCRIPTOR_MAX_SIZE) {
+	if (mr_desc_size > LIBRPMA_FIO_DESCRIPTOR_MAX_SIZE) {
 		log_err(
 			"size of the memory region's descriptor is too big (max=%i)\n",
-			LIBRPMA_COMMON_DESCRIPTOR_MAX_SIZE);
+			LIBRPMA_FIO_DESCRIPTOR_MAX_SIZE);
 		goto err_mr_dereg;
 	}
 
@@ -961,7 +961,7 @@ err_mr_dereg:
 	(void) rpma_mr_dereg(&mr);
 
 err_free:
-	librpma_common_free(&csd->mem);
+	librpma_fio_free(&csd->mem);
 
 err_ep_shutdown:
 	(void) rpma_ep_shutdown(&ep);
@@ -969,9 +969,9 @@ err_ep_shutdown:
 	return -1;
 }
 
-int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f)
+int librpma_fio_server_close_file(struct thread_data *td, struct fio_file *f)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	int rv = 0;
 	int ret;
@@ -998,7 +998,7 @@ int librpma_common_server_close_file(struct thread_data *td, struct fio_file *f)
 		rv = -1;
 	}
 
-	librpma_common_free(&csd->mem);
+	librpma_fio_free(&csd->mem);
 
 	return rv;
 }

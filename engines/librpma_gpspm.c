@@ -14,7 +14,7 @@
  * GNU General Public License for more details.
  */
 
-#include "librpma_common.h"
+#include "librpma_fio.h"
 
 #include <libpmem.h>
 
@@ -65,7 +65,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 
 static int client_init(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd;
+	struct librpma_fio_client_data *ccd;
 	struct client_data *cd;
 	uint32_t write_num;
 	struct rpma_conn_cfg *cfg = NULL;
@@ -107,7 +107,7 @@ static int client_init(struct thread_data *td)
 			 * - B == ceil(iodepth / iodepth_batch)
 			 *   which is the number of batches for N writes
 			 */
-			cd->msg_num = LIBRPMA_COMMON_CEIL(td->o.iodepth,
+			cd->msg_num = LIBRPMA_FIO_CEIL(td->o.iodepth,
 					td->o.iodepth_batch);
 		}
 	}
@@ -140,7 +140,7 @@ static int client_init(struct thread_data *td)
 		goto err_cfg_delete;
 	}
 
-	if (librpma_common_client_init(td, cfg))
+	if (librpma_fio_client_init(td, cfg))
 		goto err_cfg_delete;
 
 	ccd = td->io_ops_data;
@@ -174,7 +174,7 @@ static int client_init(struct thread_data *td)
 	return 0;
 
 err_cleanup_common:
-	librpma_common_client_cleanup(td);
+	librpma_fio_client_cleanup(td);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
@@ -187,7 +187,7 @@ err_free_cd:
 
 static int client_post_init(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct client_data *cd = ccd->client_data;
 	unsigned int io_us_msgs_size;
 	int ret;
@@ -206,12 +206,12 @@ static int client_post_init(struct thread_data *td)
 		return ret;
 	}
 
-	return librpma_common_client_post_init(td);
+	return librpma_fio_client_post_init(td);
 }
 
 static void client_cleanup(struct thread_data *td)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct client_data *cd;
 	size_t flush_req_size;
 	size_t io_u_buf_off;
@@ -224,7 +224,7 @@ static void client_cleanup(struct thread_data *td)
 
 	cd = ccd->client_data;
 	if (cd == NULL) {
-		librpma_common_client_cleanup(td);
+		librpma_fio_client_cleanup(td);
 		return;
 	}
 
@@ -235,7 +235,7 @@ static void client_cleanup(struct thread_data *td)
 	 * Note: If any operation will fail we still can send the termination
 	 * notice.
 	 */
-	(void) librpma_common_client_io_complete_all_sends(td);
+	(void) librpma_fio_client_io_complete_all_sends(td);
 
 	/* prepare the last flush message and pack it to the send buffer */
 	flush_req_size = gpspm_flush_request__get_packed_size(&Flush_req_last);
@@ -258,7 +258,7 @@ static void client_cleanup(struct thread_data *td)
 		++ccd->op_send_posted;
 
 		/* Wait for the SEND to complete */
-		(void) librpma_common_client_io_complete_all_sends(td);
+		(void) librpma_fio_client_io_complete_all_sends(td);
 	}
 
 	/* deregister the messaging buffer memory */
@@ -267,14 +267,14 @@ static void client_cleanup(struct thread_data *td)
 
 	free(ccd->client_data);
 
-	librpma_common_client_cleanup(td);
+	librpma_fio_client_cleanup(td);
 }
 
 static inline int client_io_flush(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len)
 {
-	struct librpma_common_client_data *ccd = td->io_ops_data;
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct client_data *cd = ccd->client_data;
 	size_t io_u_buf_off = IO_U_NEXT_BUF_OFF_CLIENT(cd);
 	size_t send_offset = io_u_buf_off + SEND_OFFSET;
@@ -345,19 +345,19 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.version		= FIO_IOOPS_VERSION,
 	.init			= client_init,
 	.post_init		= client_post_init,
-	.get_file_size		= librpma_common_client_get_file_size,
-	.open_file		= librpma_common_file_nop,
-	.queue			= librpma_common_client_queue,
-	.commit			= librpma_common_client_commit,
-	.getevents		= librpma_common_client_getevents,
-	.event			= librpma_common_client_event,
-	.errdetails		= librpma_common_client_errdetails,
-	.close_file		= librpma_common_file_nop,
+	.get_file_size		= librpma_fio_client_get_file_size,
+	.open_file		= librpma_fio_file_nop,
+	.queue			= librpma_fio_client_queue,
+	.commit			= librpma_fio_client_commit,
+	.getevents		= librpma_fio_client_getevents,
+	.event			= librpma_fio_client_event,
+	.errdetails		= librpma_fio_client_errdetails,
+	.close_file		= librpma_fio_file_nop,
 	.cleanup		= client_cleanup,
 	/* XXX flags require consideration */
 	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
-	.options		= librpma_common_fio_options,
-	.option_struct_size	= sizeof(struct librpma_common_options),
+	.options		= librpma_fio_options,
+	.option_struct_size	= sizeof(struct librpma_fio_private_options),
 };
 
 /* server side implementation */
@@ -380,11 +380,11 @@ struct server_data {
 
 static int server_init(struct thread_data *td)
 {
-	struct librpma_common_server_data *csd;
+	struct librpma_fio_server_data *csd;
 	struct server_data *sd;
 	int ret = -1;
 
-	if ((ret = librpma_common_server_init(td)))
+	if ((ret = librpma_fio_server_init(td)))
 		return ret;
 
 	csd = td->io_ops_data;
@@ -417,14 +417,14 @@ err_free_sd:
 	free(sd);
 
 err_server_cleanup:
-	librpma_common_server_cleanup(td);
+	librpma_fio_server_cleanup(td);
 
 	return -1;
 }
 
 static int server_post_init(struct thread_data *td)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
 	size_t io_us_size;
 	size_t io_u_buflen;
@@ -472,7 +472,7 @@ static int server_post_init(struct thread_data *td)
 
 static void server_cleanup(struct thread_data *td)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd;
 	int ret;
 
@@ -490,13 +490,13 @@ static void server_cleanup(struct thread_data *td)
 		free(sd);
 	}
 
-	librpma_common_server_cleanup(td);
+	librpma_fio_server_cleanup(td);
 }
 
 static int prepare_connection(struct thread_data *td,
 		struct rpma_conn_req *conn_req)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
 	int ret;
 	int i;
@@ -518,7 +518,7 @@ static int prepare_connection(struct thread_data *td,
 
 static int server_open_file(struct thread_data *td, struct fio_file *f)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct rpma_conn_cfg *cfg = NULL;
 	uint16_t max_msg_num = td->o.iodepth;
 	int ret;
@@ -553,7 +553,7 @@ static int server_open_file(struct thread_data *td, struct fio_file *f)
 		goto err_cfg_delete;
 	}
 
-	ret = librpma_common_server_open_file(td, f, cfg);
+	ret = librpma_fio_server_open_file(td, f, cfg);
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
@@ -564,7 +564,7 @@ err_cfg_delete:
 static int server_qe_process(struct thread_data *td,
 		struct rpma_completion *cmpl)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
 	GPSPMFlushRequest *flush_req;
 	GPSPMFlushResponse flush_resp = GPSPM_FLUSH_RESPONSE__INIT;
@@ -649,7 +649,7 @@ err_terminate:
 
 static inline int server_queue_process(struct thread_data *td)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
 	int ret;
 	int i;
@@ -679,7 +679,7 @@ static inline int server_queue_process(struct thread_data *td)
 
 static int server_cmpl_process(struct thread_data *td)
 {
-	struct librpma_common_server_data *csd = td->io_ops_data;
+	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
 	struct rpma_completion *cmpl = &sd->msgs_queued[sd->msg_queued_nr];
 	int ret;
@@ -730,14 +730,14 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.init			= server_init,
 	.post_init		= server_post_init,
 	.open_file		= server_open_file,
-	.close_file		= librpma_common_server_close_file,
+	.close_file		= librpma_fio_server_close_file,
 	.queue			= server_queue,
-	.invalidate		= librpma_common_file_nop,
+	.invalidate		= librpma_fio_file_nop,
 	.cleanup		= server_cleanup,
 	.flags			= FIO_SYNCIO | FIO_NOEXTEND | FIO_FAKEIO |
 					FIO_NOSTATS,
-	.options		= librpma_common_fio_options,
-	.option_struct_size	= sizeof(struct librpma_common_options),
+	.options		= librpma_fio_options,
+	.option_struct_size	= sizeof(struct librpma_fio_private_options),
 };
 
 /* register both engines */
