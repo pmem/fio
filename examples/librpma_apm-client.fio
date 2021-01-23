@@ -3,22 +3,22 @@
 [global]
 ioengine=librpma_apm_client
 create_serialize=0 # (required) forces specific initiation sequence
-serverip=[IP address the server is listening on]
-port=[port the server is listening on]
+serverip=[serverip] #IP address the server is listening on
+port=7204 # port(s) the server will listen on, <port; port + numjobs - 1> will be used
 thread
 
 # The client will get a remote memory region description after establishing
 # a connection.
 
 [client]
-numjobs=[# of connections]
+numjobs=1 # number of parallel connection
 group_reporting=1
-sync=[1 is the best for latency measurements]
-iodepth=[total # of ious]
-iodepth_batch_submit=[# of ious to submit at once]
-readwrite=[read/write/randread/randwrite/readwrite/rw]
-rwmixread=[% of a mixed workload that should be reads]
-blocksize=[block size]
-ramp_time=[gives some time to stabilize the workload]
+sync=1 # 1 is the best for latency measurements, 0 for bandwidth
+iodepth=2 # total # of ious
+iodepth_batch_submit=1 # of ious to submit at once
+rw=write # [read/write/randread/randwrite/readwrite/rw]
+rwmixread=70 # % of a mixed workload that should be reads
+blocksize=4KiB
+ramp_time=15s # gives some time to stabilize the workload
 time_based
-runtime=[run the workload for the specified period of time]
+runtime=60s # run the workload for the specified period of time
