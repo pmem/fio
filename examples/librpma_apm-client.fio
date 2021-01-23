@@ -1,7 +1,7 @@
-# Example of the librpma client job
+# Example of the librpma_apm client job
 
 [global]
-ioengine=librpma_client
+ioengine=librpma_apm_client
 create_serialize=0 # (required) forces specific initiation sequence
 serverip=[IP address the server is listening on]
 port=[port the server is listening on]

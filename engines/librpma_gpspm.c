@@ -1,6 +1,6 @@
 /*
  * librpma_gpspm: IO engine that uses PMDK librpma to write data,
- *                it is a variant of librpma engine in GPSPM mode
+ *		based on General Purpose Server Persistency Method
  *
  * Copyright 2020, Intel Corporation
  *
