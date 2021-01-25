@@ -889,10 +889,10 @@ int librpma_common_server_open_file(struct thread_data *td, struct fio_file *f,
 	}
 
 	/* verify size of the memory region's descriptor */
-	if (mr_desc_size > DESCRIPTOR_MAX_SIZE) {
+	if (mr_desc_size > LIBRPMA_COMMON_DESCRIPTOR_MAX_SIZE) {
 		log_err(
 			"size of the memory region's descriptor is too big (max=%i)\n",
-			DESCRIPTOR_MAX_SIZE);
+			LIBRPMA_COMMON_DESCRIPTOR_MAX_SIZE);
 		goto err_mr_dereg;
 	}
 
