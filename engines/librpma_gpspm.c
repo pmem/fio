@@ -405,10 +405,12 @@ static int server_init(struct thread_data *td)
 	}
 
 	/*
-	 * Assure a single io_u buffer can store both SEND and RECV messages.
-	 * User-provided value is intentionally ignored.
+	 * Assure a single io_u buffer can store both SEND and RECV messages and
+	 * an io_us buffer allocation is page-size-aligned which is required
+	 * to register for RDMA. User-provided values are intentionally ignored.
 	 */
 	td->o.max_bs[DDIR_READ] = IO_U_BUF_LEN;
+	td->o.mem_align = page_size;
 
 	csd->server_data = sd;
 
