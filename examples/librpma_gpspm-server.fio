@@ -22,7 +22,6 @@ thread
 direct_write_to_pmem=0
 numjobs=[# of expected connections]
 iodepth=[# of parallel GPSPM requests]
-iomem_align=$pagesize
 size=[size of workspace for a single connection]
 filename=[device dax or an existing fsdax file or "malloc" for allocation from DRAM]
 

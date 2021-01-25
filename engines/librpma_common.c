@@ -287,6 +287,12 @@ int librpma_common_client_init(struct thread_data *td,
 		(remote_flush_type & RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT) ?
 		RPMA_FLUSH_TYPE_PERSISTENT : RPMA_FLUSH_TYPE_VISIBILITY;
 
+	/*
+	 * Assure an io_us buffer allocation is page-size-aligned which is required
+	 * to register for RDMA. User-provided value is intentionally ignored.
+	 */
+	td->o.mem_align = page_size;
+
 	td->io_ops_data = ccd;
 
 	return 0;

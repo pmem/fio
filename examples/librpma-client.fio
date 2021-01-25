@@ -14,7 +14,6 @@ thread
 numjobs=[# of connections]
 group_reporting=1
 sync=[1 is the best for latency measurements]
-iomem_align=$pagesize
 iodepth=[total # of ious]
 iodepth_batch_submit=[# of ious to submit at once]
 readwrite=[read/write/randread/randwrite/readwrite/rw]
