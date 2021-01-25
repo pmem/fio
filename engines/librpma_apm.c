@@ -1,5 +1,6 @@
 /*
- * librpma: IO engine that uses PMDK librpma to read and write data
+* librpma_apm: IO engine that uses PMDK librpma to read and write data,
+ *		based on Appliance Persistency Method
  *
  * Copyright 2020, Intel Corporation
  *
@@ -193,7 +194,7 @@ static int client_get_io_u_index(struct rpma_completion *cmpl,
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
-	.name			= "librpma_client",
+	.name			= "librpma_apm_client",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= client_init,
 	.post_init		= librpma_common_client_post_init,
@@ -225,7 +226,7 @@ static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 }
 
 FIO_STATIC struct ioengine_ops ioengine_server = {
-	.name			= "librpma_server",
+	.name			= "librpma_apm_server",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= librpma_common_server_init,
 	.open_file		= server_open_file,
@@ -241,13 +242,13 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 
 /* register both engines */
 
-static void fio_init fio_librpma_register(void)
+static void fio_init fio_librpma_apm_register(void)
 {
 	register_ioengine(&ioengine_client);
 	register_ioengine(&ioengine_server);
 }
 
-static void fio_exit fio_librpma_unregister(void)
+static void fio_exit fio_librpma_apm_unregister(void)
 {
 	unregister_ioengine(&ioengine_client);
 	unregister_ioengine(&ioengine_server);
