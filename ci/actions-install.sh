@@ -70,6 +70,13 @@ DPKGCFG
     sudo apt-get -qq update
     echo "Installing packages..."
     sudo apt-get install --no-install-recommends -qq -y "${pkgs[@]}"
+    # librpma is supported on the x86_64 architecture for now
+    if [[ $CI_TARGET_ARCH == "x86_64" ]]; then
+        # install libprotobuf-c-dev required by librpma_gpspm
+        sudo apt-get install --no-install-recommends -qq -y libprotobuf-c-dev
+        # install librpma from sources from GitHub
+        ci/actions-install-librpma.sh
+    fi
 }
 
 install_linux() {
