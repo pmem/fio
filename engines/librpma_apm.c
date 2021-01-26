@@ -207,8 +207,7 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.errdetails		= librpma_fio_client_errdetails,
 	.close_file		= librpma_fio_file_nop,
 	.cleanup		= client_cleanup,
-	/* XXX flags require consideration */
-	.flags			= FIO_DISKLESSIO | FIO_UNIDIR | FIO_PIPEIO,
+	.flags			= FIO_DISKLESSIO,
 	.options		= librpma_fio_options,
 	.option_struct_size	= sizeof(struct librpma_fio_options_values),
 };
