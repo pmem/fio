@@ -19,15 +19,19 @@ path-exclude=/usr/share/doc/*
 DPKGCFG
     # Packages available on i686 and x86_64
     pkgs=(
-        libaio-dev
         libcunit1-dev
         libcurl4-openssl-dev
-        libfl-dev
         libibverbs-dev
         libnuma-dev
         librdmacm-dev
         valgrind
     )
+    if [ "${CI_EVENT}" == "schedule" ]; then
+        pkgs+=(
+            libaio-dev
+            libfl-dev
+        )
+    fi
     case "${CI_TARGET_ARCH}" in
         "i686")
             sudo dpkg --add-architecture i386
@@ -39,16 +43,20 @@ DPKGCFG
             ;;
         "x86_64")
             pkgs+=(
-                libglusterfs-dev
                 libgoogle-perftools-dev
-                libiscsi-dev
                 libnbd-dev
                 libpmem-dev
                 libpmemblk-dev
-                librbd-dev
                 libtcmalloc-minimal4
-                nvidia-cuda-dev
             )
+            if [ "${CI_EVENT}" == "schedule" ]; then
+                pkgs+=(
+                    libglusterfs-dev
+                    libiscsi-dev
+                    librbd-dev
+                    nvidia-cuda-dev
+                )
+            fi
             ;;
     esac
 

@@ -3,9 +3,11 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron:  '0 0 * * *'
 
 jobs:
-  build:
+  linux_x86_64:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -13,8 +15,6 @@ jobs:
         build:
         - linux-gcc
         - linux-clang
-        - macos
-        - linux-i686-gcc
         include:
         - build: linux-gcc
           os: ubuntu-20.04
@@ -22,6 +22,34 @@ jobs:
         - build: linux-clang
           os: ubuntu-20.04
           cc: clang
+
+    env:
+      CI_TARGET_ARCH: ${{ matrix.arch }}
+      CI_EVENT: ${{ github.event_name }}
+      CC: ${{ matrix.cc }}
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Install dependencies
+      run: ./ci/actions-install.sh
+    - name: Build
+      run: ./ci/actions-build.sh
+    - name: Smoke test
+      run: ./ci/actions-smoke-test.sh
+    - name: Full test
+      run: ./ci/actions-full-test.sh
+
+  linux_i686_and_macos:
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build:
+        - macos
+        - linux-i686-gcc
+        include:
         - build: macos
           os: macos-11.0
         - build: linux-i686-gcc
@@ -30,6 +58,7 @@ jobs:
 
     env:
       CI_TARGET_ARCH: ${{ matrix.arch }}
+      CI_EVENT: ${{ github.event_name }}
       CC: ${{ matrix.cc }}
 
     steps:
