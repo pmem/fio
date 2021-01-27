@@ -20,10 +20,14 @@ main() {
                     ;;
                 "x86_64")
                     configure_flags+=(
-                        "--enable-cuda"
-                        "--enable-libiscsi"
                         "--enable-libnbd"
                     )
+                    if [ "${CI_EVENT}" == "schedule" ]; then
+                        configure_flags+=(
+                            "--enable-cuda"
+                            "--enable-libiscsi"
+                        )
+                    fi
                     ;;
             esac
         ;;
