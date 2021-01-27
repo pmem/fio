@@ -31,7 +31,7 @@ main() {
     configure_flags+=(--extra-cflags="${extra_cflags}")
 
     ./configure "${configure_flags[@]}"
-    make -j 2
+    make -j$(nproc)
 }
 
 main
