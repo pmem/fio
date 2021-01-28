@@ -145,13 +145,13 @@ static int client_init(struct thread_data *td)
 
 	ccd = td->io_ops_data;
 
-	if (ccd->ws->direct_write_to_pmem) {
-		if (ccd->server_mr_flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
-			/* XXX log_info mixes with the JSON output */
-			log_err(
-				"Note: The server side supports Direct Write to PMem and it is equipped with PMem (direct_write_to_pmem).\n"
-				"You can use librpma_client and librpma_server engines for better performance instead of GPSPM.\n");
-		}
+	if (ccd->ws->direct_write_to_pmem &&
+	    ccd->server_mr_flush_type == RPMA_FLUSH_TYPE_PERSISTENT &&
+	    td->thread_number == 1) {
+		/* XXX log_info mixes with the JSON output */
+		log_err(
+			"Note: The server side supports Direct Write to PMem and it is equipped with PMem (direct_write_to_pmem).\n"
+			"You can use librpma_client and librpma_server engines for better performance instead of GPSPM.\n");
 	}
 
 	/* validate the server's RQ capacity */
