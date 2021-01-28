@@ -323,6 +323,10 @@ void librpma_fio_client_cleanup(struct thread_data *td)
 	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	enum rpma_conn_event ev;
 	int ret;
+
+	if (ccd == NULL)
+		return;
+
 	/* delete the iou's memory registration */
 	if ((ret = rpma_mr_dereg(&ccd->orig_mr)))
 		librpma_td_verror(td, ret, "rpma_mr_dereg");
@@ -351,6 +355,7 @@ void librpma_fio_client_cleanup(struct thread_data *td)
 	free(ccd->io_us_flight);
 	free(ccd->io_us_completed);
 	free(ccd);
+	td->io_ops_data = NULL; /* zero ccd */
 }
 
 int librpma_fio_file_nop(struct thread_data *td, struct fio_file *f)
