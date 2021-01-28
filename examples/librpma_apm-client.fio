@@ -1,4 +1,4 @@
-# Example of the librpma_apm client job
+# Example of the librpma_apm_client job
 
 [global]
 ioengine=librpma_apm_client
@@ -11,12 +11,12 @@ thread
 # a connection.
 
 [client]
-numjobs=1 # number of parallel connection
+numjobs=1 # number of parallel connections
 group_reporting=1
 sync=1 # 1 is the best for latency measurements, 0 for bandwidth
-iodepth=2 # total # of ious
-iodepth_batch_submit=1 # of ious to submit at once
-rw=write # [read/write/randread/randwrite/readwrite/rw]
+iodepth=2 # total number of ious
+iodepth_batch_submit=1 # number of ious to be submitted at once
+rw=write # read/write/randread/randwrite/readwrite/rw
 rwmixread=70 # % of a mixed workload that should be reads
 blocksize=4KiB
 ramp_time=15s # gives some time to stabilize the workload

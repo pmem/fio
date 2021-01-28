@@ -1,4 +1,4 @@
-# Example of the librpma_apm-server job
+# Example of the librpma_apm_server job
 
 [global]
 ioengine=librpma_apm_server
