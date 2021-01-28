@@ -105,8 +105,9 @@ static int client_init(struct thread_data *td)
 
 	if (ccd->server_mr_flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
 		if (!ccd->ws->direct_write_to_pmem) {
-			log_err(
-				"Fio librpma engine will not work until the Direct Write to PMem on the server side is possible (direct_write_to_pmem)\n");
+			if (td->thread_number == 1)
+				log_err(
+					"Fio librpma engine will not work until the Direct Write to PMem on the server side is possible (direct_write_to_pmem)\n");
 			goto err_cleanup_common;
 		}
 
@@ -129,7 +130,7 @@ static int client_init(struct thread_data *td)
 		}
 
 		(void) rpma_peer_cfg_delete(&pcfg);
-	} else {
+	} else if (td->thread_number == 1) {
 		/* XXX log_info mixes with the JSON output */
 		log_err(
 			"Note: Direct Write to PMem is not supported by default nor required if you use DRAM instead of PMem on the server side (direct_write_to_pmem).\n"
