@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
-# librpma v0.9.0 release
-LIBRPMA_VERSION=0.9.0
+# 01.02.2021 Merge pull request #802 from osalyk/rejected
+LIBRPMA_VERSION=f5ccce39674f6837d788da24b5646329affb8757
 
 WORKDIR=$(pwd)
 
