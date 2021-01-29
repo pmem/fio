@@ -231,27 +231,47 @@ int librpma_fio_client_init(struct thread_data *td,
 	/* create a connection request */
 	if (librpma_fio_td_port(o->port, td, port_td))
 		goto err_peer_delete;
-	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
-			cfg, &req))) {
-		librpma_td_verror(td, ret, "rpma_conn_req_new");
-		goto err_peer_delete;
-	}
 
-	/* connect the connection request and obtain the connection object */
-	if ((ret = rpma_conn_req_connect(&req, NULL, &ccd->conn))) {
-		librpma_td_verror(td, ret, "rpma_conn_req_connect");
-		goto err_req_delete;
-	}
+	for (int retry = 0; retry < MAX_RETRY; retry++) {
+		if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
+				cfg, &req))) {
+			librpma_td_verror(td, ret, "rpma_conn_req_new");
+			goto err_peer_delete;
+		}
 
-	/* wait for the connection to establish */
-	if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
-		librpma_td_verror(td, ret, "rpma_conn_next_event");
-		goto err_conn_delete;
-	} else if (event != RPMA_CONN_ESTABLISHED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
-			rpma_utils_conn_event_2str(event));
-		goto err_conn_delete;
+		/*
+		 * connect the connection request
+		 * and obtain the connection object
+		 */
+		if ((ret = rpma_conn_req_connect(&req, NULL, &ccd->conn))) {
+			librpma_td_verror(td, ret, "rpma_conn_req_connect");
+			goto err_req_delete;
+		}
+
+		/* wait for the connection to establish */
+		if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
+			librpma_td_verror(td, ret, "rpma_conn_next_event");
+			goto err_conn_delete;
+		} else if ((event != RPMA_CONN_ESTABLISHED &&
+				event != RPMA_CONN_REJECTED) ||
+				retry == MAX_RETRY - 1) {
+			log_err(
+				"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
+				rpma_utils_conn_event_2str(event));
+			goto err_conn_delete;
+		} else if (event == RPMA_CONN_ESTABLISHED)
+			break;
+
+		if (rpma_conn_disconnect(ccd->conn)) {
+			(void)rpma_conn_delete(&ccd->conn);
+			goto err_peer_delete;
+		} else {
+			if (rpma_conn_delete(&ccd->conn))
+				goto err_peer_delete;
+		}
+
+		/* Wait for the server */
+		retry(retry);
 	}
 
 	/* get the connection's private data sent from the server */

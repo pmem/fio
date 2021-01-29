@@ -26,6 +26,11 @@
 #define librpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
+#define MAX_RETRY	10
+
+#define retry(retry) \
+	log_err("Wait for the server, try:%d\n", retry), sleep(5);
+
 /* ceil(a / b) = (a + b - 1) / b */
 #define LIBRPMA_FIO_CEIL(a, b) (((a) + (b) - 1) / (b))
 
