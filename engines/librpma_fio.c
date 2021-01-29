@@ -231,28 +231,51 @@ int librpma_fio_client_init(struct thread_data *td,
 	/* create a connection request */
 	if (librpma_fio_td_port(o->port, td, port_td))
 		goto err_peer_delete;
-	if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
-			cfg, &req))) {
-		librpma_td_verror(td, ret, "rpma_conn_req_new");
+
+	for (int retry = 0; retry < LIBRPMA_FIO_RETRY_MAX_NO; retry++) {
+		if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
+				cfg, &req))) {
+			librpma_td_verror(td, ret, "rpma_conn_req_new");
+			break;
+		}
+
+		/*
+		 * connect the connection request
+		 * and obtain the connection object
+		 */
+		if ((ret = rpma_conn_req_connect(&req, NULL, &ccd->conn))) {
+			librpma_td_verror(td, ret, "rpma_conn_req_connect");
+			(void) rpma_conn_req_delete(&req);
+			break;
+		}
+
+		/* wait for the connection to establish */
+		if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
+			librpma_td_verror(td, ret, "rpma_conn_next_event");
+			conn_drop_and_delete(&ccd->conn);
+			break;
+		} else if (event == RPMA_CONN_ESTABLISHED) {
+			break;
+		} else if (event == RPMA_CONN_REJECTED) {
+			conn_drop_and_delete(&ccd->conn);
+			if (retry < LIBRPMA_FIO_RETRY_MAX_NO - 1) {
+				log_err("Retrying...\n");
+				sleep(LIBRPMA_FIO_RETRY_DELAY_S);
+			} else {
+				log_err("The retry number exceeded. Closing.\n");
+				break;
+			}
+		} else {
+			log_err(
+				"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
+				rpma_utils_conn_event_2str(event));
+			conn_drop_and_delete(&ccd->conn);
+			break;
+		}
+	}
+
+	if (ccd->conn == NULL)
 		goto err_peer_delete;
-	}
-
-	/* connect the connection request and obtain the connection object */
-	if ((ret = rpma_conn_req_connect(&req, NULL, &ccd->conn))) {
-		librpma_td_verror(td, ret, "rpma_conn_req_connect");
-		goto err_req_delete;
-	}
-
-	/* wait for the connection to establish */
-	if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
-		librpma_td_verror(td, ret, "rpma_conn_next_event");
-		goto err_conn_delete;
-	} else if (event != RPMA_CONN_ESTABLISHED) {
-		log_err(
-			"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
-			rpma_utils_conn_event_2str(event));
-		goto err_conn_delete;
-	}
 
 	/* get the connection's private data sent from the server */
 	if ((ret = rpma_conn_get_private_data(ccd->conn, &pdata))) {
@@ -301,10 +324,8 @@ err_conn_delete:
 	(void) rpma_conn_disconnect(ccd->conn);
 	(void) rpma_conn_delete(&ccd->conn);
 
-err_req_delete:
-	(void) rpma_conn_req_delete(&req);
-
 err_peer_delete:
+	(void) rpma_conn_req_delete(&req);
 	(void) rpma_peer_delete(&ccd->peer);
 
 err_free_io_u_queues:

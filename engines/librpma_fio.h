@@ -26,6 +26,16 @@
 #define librpma_td_verror(td, err, func) \
 	td_vmsg((td), (err), rpma_err_2str(err), (func))
 
+#define LIBRPMA_FIO_RETRY_MAX_NO	10
+#define LIBRPMA_FIO_RETRY_DELAY_S	5
+
+static inline void
+conn_drop_and_delete(struct rpma_conn **conn_ptr)
+{
+	(void) rpma_conn_disconnect(*conn_ptr);
+	(void) rpma_conn_delete(conn_ptr);
+}
+
 /* ceil(a / b) = (a + b - 1) / b */
 #define LIBRPMA_FIO_CEIL(a, b) (((a) + (b) - 1) / (b))
 
