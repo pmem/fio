@@ -360,17 +360,6 @@ Darwin)
   if test -z "$cpu" && test "$(sysctl -n hw.optional.x86_64)" = "1"; then
     cpu="x86_64"
   fi
-  # Error at compile time linking of weak/partial symbols if possible...
-cat > $TMPC <<EOF
-int main(void)
-{
-  return 0;
-}
-EOF
-  if compile_prog "" "-Wl,-no_weak_imports" "disable weak symbols"; then
-    echo "Disabling weak symbols"
-    LDFLAGS="$LDFLAGS -Wl,-no_weak_imports"
-  fi
   ;;
 SunOS)
   # `uname -m` returns i86pc even on an x86_64 box, so default based on isainfo
