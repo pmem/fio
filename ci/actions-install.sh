@@ -68,6 +68,11 @@ DPKGCFG
 
     echo "Updating APT..."
     sudo apt-get -qq update
+
+    # Update the 'apt' package in order to fix the following bug:
+    # https://bugs.launchpad.net/ubuntu-cdimage/+bug/1871268
+    sudo apt-get install --no-install-recommends -qq -y apt
+
     echo "Installing packages..."
     sudo apt-get install --no-install-recommends -qq -y "${pkgs[@]}"
     # librpma is supported on the x86_64 architecture for now
