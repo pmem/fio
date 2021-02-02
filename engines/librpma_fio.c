@@ -167,13 +167,6 @@ void librpma_fio_free(struct librpma_fio_mem *mem)
 #define LIBRPMA_FIO_RETRY_MAX_NO	10
 #define LIBRPMA_FIO_RETRY_DELAY_S	5
 
-static inline void
-conn_drop_and_delete(struct rpma_conn **conn_ptr)
-{
-	(void) rpma_conn_disconnect(*conn_ptr);
-	(void) rpma_conn_delete(conn_ptr);
-}
-
 int librpma_fio_client_init(struct thread_data *td,
 		struct rpma_conn_cfg *cfg)
 {
@@ -246,7 +239,7 @@ int librpma_fio_client_init(struct thread_data *td,
 		if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
 				cfg, &req))) {
 			librpma_td_verror(td, ret, "rpma_conn_req_new");
-			break;
+			goto err_peer_delete;
 		}
 
 		/*
@@ -255,19 +248,18 @@ int librpma_fio_client_init(struct thread_data *td,
 		 */
 		if ((ret = rpma_conn_req_connect(&req, NULL, &ccd->conn))) {
 			librpma_td_verror(td, ret, "rpma_conn_req_connect");
-			(void) rpma_conn_req_delete(&req);
-			break;
+			goto err_req_delete;
 		}
 
 		/* wait for the connection to establish */
 		if ((ret = rpma_conn_next_event(ccd->conn, &event))) {
 			librpma_td_verror(td, ret, "rpma_conn_next_event");
-			conn_drop_and_delete(&ccd->conn);
-			break;
+			goto err_conn_delete;
 		} else if (event == RPMA_CONN_ESTABLISHED) {
 			break;
 		} else if (event == RPMA_CONN_REJECTED) {
-			conn_drop_and_delete(&ccd->conn);
+			(void) rpma_conn_disconnect(ccd->conn);
+			(void) rpma_conn_delete(&ccd->conn);
 			if (retry < LIBRPMA_FIO_RETRY_MAX_NO - 1) {
 				log_err("Thread [%d]: Retrying...\n",
 					td->thread_number);
@@ -276,14 +268,12 @@ int librpma_fio_client_init(struct thread_data *td,
 				log_err(
 					"Thread [%d]: The retry number exceeded. Closing.\n",
 					td->thread_number);
-				break;
 			}
 		} else {
 			log_err(
 				"rpma_conn_next_event returned an unexptected event: (%s != RPMA_CONN_ESTABLISHED)\n",
 				rpma_utils_conn_event_2str(event));
-			conn_drop_and_delete(&ccd->conn);
-			break;
+			goto err_conn_delete;
 		}
 	}
 
@@ -337,8 +327,10 @@ err_conn_delete:
 	(void) rpma_conn_disconnect(ccd->conn);
 	(void) rpma_conn_delete(&ccd->conn);
 
-err_peer_delete:
+err_req_delete:
 	(void) rpma_conn_req_delete(&req);
+
+err_peer_delete:
 	(void) rpma_peer_delete(&ccd->peer);
 
 err_free_io_u_queues:
