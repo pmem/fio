@@ -130,7 +130,7 @@ static int client_init(struct thread_data *td)
 		}
 
 		(void) rpma_peer_cfg_delete(&pcfg);
-	} else if (td->thread_number == 1) {
+	} else if (ccd->ws->direct_write_to_pmem && td->thread_number == 1) {
 		/* XXX log_info mixes with the JSON output */
 		log_err(
 			"Note: Direct Write to PMem is not supported by default nor required if you use DRAM instead of PMem on the server side (direct_write_to_pmem).\n"
