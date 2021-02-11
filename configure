@@ -933,6 +933,8 @@ cat > $TMPC << EOF
 #include <librpma.h>
 int main(int argc, char **argv)
 {
+  enum rpma_conn_event event = RPMA_CONN_REJECTED;
+  (void) event; /* unused */
   rpma_log_set_threshold(RPMA_LOG_THRESHOLD, RPMA_LOG_LEVEL_INFO);
   return 0;
 }
