@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
-# 01.02.2021 Merge pull request #802 from osalyk/rejected
-LIBRPMA_VERSION=f5ccce39674f6837d788da24b5646329affb8757
+# 11.02.2021 Merge pull request #866 from ldorau/rpma-mmap-memory-for-rpma_mr_reg-in-rpma_flush_apm_new
+LIBRPMA_VERSION=fbac593917e98f3f26abf14f4fad5a832b330f5c
 
 WORKDIR=$(pwd)
 
