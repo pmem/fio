@@ -36,7 +36,6 @@ struct librpma_fio_options_values {
 	 * have padding ahead of it.
 	 */
 	void *pad;
-	/* server ip */
 	char *server_ip;
 	/* base server listening port */
 	char *port;
