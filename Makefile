@@ -101,7 +101,7 @@ ifdef CONFIG_RDMA
 endif
 ifdef CONFIG_LIBRPMA_APM
   librpma_apm_SRCS = engines/librpma_apm.c
-  librpma_common_SRCS = engines/librpma_common.c
+  librpma_fio_SRCS = engines/librpma_fio.c
   librpma_apm_LIBS = -lrpma -lpmem
   ENGINES += librpma_apm
 endif
