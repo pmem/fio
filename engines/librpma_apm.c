@@ -2,7 +2,7 @@
 * librpma_apm: IO engine that uses PMDK librpma to read and write data,
  *		based on Appliance Persistency Method
  *
- * Copyright 2020, Intel Corporation
+ * Copyright 2020-2021, Intel Corporation
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License,
@@ -36,7 +36,7 @@ static int client_init(struct thread_data *td)
 
 	/* not supported readwrite = trim / randtrim / trimwrite */
 	if (td_trim(td)) {
-		log_err("Not supported mode.\n");
+		td_verror(td, EINVAL, "Not supported mode.");
 		return -1;
 	}
 
