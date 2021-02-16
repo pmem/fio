@@ -106,6 +106,12 @@ ifdef CONFIG_LIBRPMA_GPSPM
   librpma_gpspm_LIBS = -lrpma -lpmem -lprotobuf-c
   ENGINES += librpma_gpspm
 endif
+ifdef CONFIG_LIBRPMA_AOF
+  librpma_gpspm_SRCS = engines/librpma_aof.c
+  librpma_fio_SRCS = engines/librpma_fio.c
+  librpma_gpspm_LIBS = -lrpma -lpmem
+  ENGINES += librpma_aof
+endif
 ifdef librpma_fio_SRCS
   SOURCE += $(librpma_fio_SRCS)
 endif

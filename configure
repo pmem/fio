@@ -2825,6 +2825,7 @@ fi
 if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" \
     -a "$librpma" = "yes" -a "$libpmem" = "yes" ; then
   output_sym "CONFIG_LIBRPMA_APM"
+  output_sym "CONFIG_LIBRPMA_AOF"
 fi
 if test "$cpu" = "x86_64" -a "$libverbs" = "yes" -a "$rdmacm" = "yes" \
     -a "$librpma" = "yes" -a "$libpmem" = "yes" -a "$libprotobuf_c" = "yes" ; then
