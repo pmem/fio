@@ -2,7 +2,7 @@
  * librpma_gpspm: IO engine that uses PMDK librpma to write data,
  *		based on General Purpose Server Persistency Method
  *
- * Copyright 2020, Intel Corporation
+ * Copyright 2020-2021, Intel Corporation
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License,
@@ -77,7 +77,7 @@ static int client_init(struct thread_data *td)
 	 *               / rw / randrw / trimwrite
 	 */
 	if (td_read(td) || td_trim(td)) {
-		log_err("Not supported mode.\n");
+		td_verror(td, EINVAL, "Not supported mode.");
 		return -1;
 	}
 
