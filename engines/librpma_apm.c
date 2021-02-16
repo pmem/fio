@@ -85,7 +85,7 @@ static int client_init(struct thread_data *td)
 	/* create a connection configuration object */
 	if ((ret = rpma_conn_cfg_new(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		return 1;
+		return -1;
 	}
 
 	/* apply queue sizes */
