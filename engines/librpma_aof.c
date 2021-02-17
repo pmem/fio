@@ -31,8 +31,82 @@ struct client_data {
 
 static int client_init(struct thread_data *td)
 {
-	/* XXX */
+	struct librpma_fio_client_data *ccd;
+	struct client_data *cd;
+	uint32_t write_num;
+	struct rpma_conn_cfg *cfg = NULL;
+	int ret;
+
+	/* allocate client's data */
+	cd = calloc(1, sizeof(*cd));
+	if (cd == NULL) {
+		td_verror(td, errno, "calloc");
+		return -1;
+	}
+
+	/* create a connection configuration object */
+	if ((ret = rpma_conn_cfg_new(&cfg))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		goto err_free_cd;
+	}
+
+	write_num = 1; /* WRITE */
+	cd->msg_num = 1; /* FLUSH */
+
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all io_us (WRITEs) and all flush requests (SENDs)
+	 * - the receive queue (RQ) has to be big enough to accommodate
+	 *   all flush responses (RECVs)
+	 * - the completion queue (CQ) has to be big enough to accommodate all
+	 *   success and error completions (sq_size + rq_size)
+	 */
+	if ((ret = rpma_conn_cfg_set_sq_size(cfg, write_num + cd->msg_num))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		goto err_cfg_delete;
+	}
+	if ((ret = rpma_conn_cfg_set_rq_size(cfg, cd->msg_num))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
+	if ((ret = rpma_conn_cfg_set_cq_size(cfg, write_num + cd->msg_num * 2))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		goto err_cfg_delete;
+	}
+
+	if (librpma_fio_client_init(td, cfg))
+		goto err_cfg_delete;
+
+	ccd = td->io_ops_data;
+
+	/* validate the server's RQ capacity */
+	if (cd->msg_num > ccd->ws->max_msg_num) {
+		log_err(
+			"server's RQ size (iodepth) too small to handle the client's workspace requirements (%u < %u)\n",
+			ccd->ws->max_msg_num, cd->msg_num);
+		goto err_cleanup_common;
+	}
+
+	if ((ret = rpma_conn_cfg_delete(&cfg))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		/* non fatal error - continue */
+	}
+
+	ccd->client_data = cd;
+
 	return 0;
+
+err_cleanup_common:
+	librpma_fio_client_cleanup(td);
+
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(&cfg);
+
+err_free_cd:
+	free(cd);
+
+	return -1;
 }
 
 static int client_post_init(struct thread_data *td)
