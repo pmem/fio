@@ -1,0 +1,22 @@
+syntax = "proto2";
+
+message AOF_update_request {
+    /* an offset of the 1st region to be flushed within its memory registration */
+    required fixed64 append_offset = 1;
+    /* a length of the 1st region to be flushed */
+    required fixed64 append_length = 2;
+
+    /*
+     * an offset of the atomic write and also of the 2nd region to be flushed
+     * within its memory registration
+     */
+    required fixed64 pointer_offset = 3;
+
+    /* a user-defined operation context */
+    required fixed64 op_context = 4;
+}
+
+message AOF_update_response {
+    /* a user-defined context of the AOF update operation's request */
+    required fixed64 op_context = 1;
+}
