@@ -95,7 +95,35 @@ static struct io_u *client_event(struct thread_data *td, int event)
 
 static void client_cleanup(struct thread_data *td)
 {
-	/* XXX */
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
+	struct client_data *cd;
+	int ret;
+
+	if (ccd == NULL)
+		return;
+
+	cd = ccd->client_data;
+	if (cd == NULL) {
+		librpma_fio_client_cleanup(td);
+		return;
+	}
+
+	/*
+	 * Make sure all SEND completions are collected ergo there are free
+	 * slots in the SQ for the last SEND message.
+	 *
+	 * Note: If any operation will fail we still can send the termination
+	 * notice.
+	 */
+	(void) librpma_fio_client_io_complete_all_sends(td);
+
+	/* deregister the messaging buffer memory */
+	if ((ret = rpma_mr_dereg(&cd->msg_mr)))
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	free(ccd->client_data);
+
+	librpma_fio_client_cleanup(td);
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
