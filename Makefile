@@ -107,7 +107,7 @@ ifdef CONFIG_LIBRPMA_GPSPM
   ENGINES += librpma_gpspm
 endif
 ifdef CONFIG_LIBRPMA_AOF
-  librpma_aof_SRCS = engines/librpma_aof.c
+  librpma_aof_SRCS = engines/librpma_aof.c engines/librpma_aof_update.pb-c.c
   librpma_fio_SRCS = engines/librpma_fio.c
   librpma_aof_LIBS = -lrpma -lpmem
   ENGINES += librpma_aof
