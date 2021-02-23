@@ -363,6 +363,11 @@ static int server_post_init(struct thread_data *td)
 	io_us_size = (unsigned long long)io_u_buflen *
 			(unsigned long long)td->o.iodepth;
 
+	/* add space for the AOF pointer */
+	if (sd->orig_buffer_aligned + io_us_size + sizeof(uint64_t)
+	    <= td->orig_buffer + td->orig_buffer_size)
+		io_us_size += sizeof(uint64_t);
+
 	if ((ret = rpma_mr_reg(csd->peer, sd->orig_buffer_aligned, io_us_size,
 			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
 			&sd->msg_mr))) {
