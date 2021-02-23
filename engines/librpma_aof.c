@@ -470,7 +470,75 @@ static void server_cleanup(struct thread_data *td)
 	librpma_fio_server_cleanup(td);
 }
 
+static int prepare_connection(struct thread_data *td,
+		struct rpma_conn_req *conn_req)
+{
+	struct librpma_fio_server_data *csd = td->io_ops_data;
+	struct server_data *sd = csd->server_data;
+	int ret;
+	int i;
+
+	/* prepare buffers for update requests */
+	sd->msg_sqe_available = td->o.iodepth;
+	for (i = 0; i < td->o.iodepth; i++) {
+		size_t offset_recv_msg = IO_U_BUFF_OFF_SERVER(i) + RECV_OFFSET;
+		if ((ret = rpma_conn_req_recv(conn_req, sd->msg_mr,
+				offset_recv_msg, MAX_MSG_SIZE,
+				(const void *)(uintptr_t)i))) {
+			librpma_td_verror(td, ret, "rpma_conn_req_recv");
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static int server_open_file(struct thread_data *td, struct fio_file *f)
+{
+	struct librpma_fio_server_data *csd = td->io_ops_data;
+	struct rpma_conn_cfg *cfg = NULL;
+	uint16_t max_msg_num = td->o.iodepth;
+	int ret;
+
+	csd->prepare_connection = prepare_connection;
+
+	/* create a connection configuration object */
+	if ((ret = rpma_conn_cfg_new(&cfg))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		return -1;
+	}
+
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all possible update requests (SENDs)
+	 * - the receive queue (RQ) has to be big enough to accommodate
+	 *   all update responses (RECVs)
+	 * - the completion queue (CQ) has to be big enough to accommodate
+	 *   all success and error completions (sq_size + rq_size)
+	 */
+	if ((ret = rpma_conn_cfg_set_sq_size(cfg, max_msg_num))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		goto err_cfg_delete;
+	}
+	if ((ret = rpma_conn_cfg_set_rq_size(cfg, max_msg_num))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
+	if ((ret = rpma_conn_cfg_set_cq_size(cfg, max_msg_num * 2))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		goto err_cfg_delete;
+	}
+
+	ret = librpma_fio_server_open_file(td, f, cfg);
+
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(&cfg);
+
+	return ret;
+}
+
+static int server_close_file(struct thread_data *td, struct fio_file *f)
 {
 	/* XXX */
 	return 0;
