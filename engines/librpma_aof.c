@@ -25,6 +25,9 @@
 #define SEND_OFFSET (0)
 #define RECV_OFFSET (SEND_OFFSET + MAX_MSG_SIZE)
 
+#define AOF_UPDATE_REQUEST__LAST \
+	{ PROTOBUF_C_MESSAGE_INIT(&aof_update_request__descriptor), 0, 0, 0 }
+
 /*
  * 'Update_req_last' is the last update request the client has to send to
  * the server to indicate that the client is done.
@@ -214,6 +217,10 @@ static void client_cleanup(struct thread_data *td)
 {
 	struct librpma_fio_client_data *ccd = td->io_ops_data;
 	struct client_data *cd;
+	size_t update_req_size;
+	size_t io_u_buf_off;
+	size_t send_offset;
+	void *send_ptr;
 	int ret;
 
 	if (ccd == NULL)
@@ -234,7 +241,29 @@ static void client_cleanup(struct thread_data *td)
 	 */
 	(void) librpma_fio_client_io_complete_all_sends(td);
 
-	/* XXX here the last message should be sent */
+	/* prepare the last update message and pack it to the send buffer */
+	update_req_size = aof_update_request__get_packed_size(&Update_req_last);
+	if (update_req_size > MAX_MSG_SIZE) {
+		log_err(
+			"Packed update request size is bigger than available send buffer space (%zu > %d\n",
+			update_req_size, MAX_MSG_SIZE);
+	} else {
+		io_u_buf_off = IO_U_NEXT_BUF_OFF_CLIENT(cd);
+		send_offset = io_u_buf_off + SEND_OFFSET;
+		send_ptr = cd->io_us_msgs + send_offset;
+		(void) aof_update_request__pack(&Update_req_last, send_ptr);
+
+		/* send the update message */
+		if ((ret = rpma_send(ccd->conn, cd->msg_mr, send_offset,
+				update_req_size, RPMA_F_COMPLETION_ALWAYS,
+				NULL)))
+			librpma_td_verror(td, ret, "rpma_send");
+
+		++ccd->op_send_posted;
+
+		/* Wait for the SEND to complete */
+		(void) librpma_fio_client_io_complete_all_sends(td);
+	}
 
 	/* deregister the messaging buffer memory */
 	if ((ret = rpma_mr_dereg(&cd->msg_mr)))
