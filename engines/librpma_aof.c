@@ -199,33 +199,6 @@ static int client_get_file_size(struct thread_data *td, struct fio_file *f)
 	return 0;
 }
 
-static int client_commit(struct thread_data *td)
-{
-	/*
-	 * XXX
-	 *    for io_u in queued[]:
-	 *        rpma_write()
-	 *        rpma_send() # atomic write
-	 *
-	 *    for:
-	 *        rpma_recv()
-	 */
-	return 0;
-}
-
-static int client_getevents(struct thread_data *td, unsigned int min,
-		unsigned int max, const struct timespec *t)
-{
-	/* XXX */
-	return 0;
-}
-
-static struct io_u *client_event(struct thread_data *td, int event)
-{
-	/* XXX */
-	return NULL;
-}
-
 static void client_cleanup(struct thread_data *td)
 {
 	struct librpma_fio_client_data *ccd = td->io_ops_data;
@@ -366,9 +339,9 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 	.get_file_size		= client_get_file_size,
 	.open_file		= librpma_fio_file_nop,
 	.queue			= librpma_fio_client_queue,
-	.commit			= client_commit,
-	.getevents		= client_getevents,
-	.event			= client_event,
+	.commit			= librpma_fio_client_commit,
+	.getevents		= librpma_fio_client_getevents,
+	.event			= librpma_fio_client_event,
 	.errdetails		= librpma_fio_client_errdetails,
 	.close_file		= librpma_fio_file_nop,
 	.cleanup		= client_cleanup,
