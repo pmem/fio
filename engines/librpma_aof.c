@@ -365,6 +365,35 @@ FIO_STATIC struct ioengine_ops ioengine_client = {
 
 #define IO_U_BUFF_OFF_SERVER(i) (i * IO_U_BUF_LEN)
 
+struct fio_option librpma_aof_options[] = {
+	LIBRPMA_FIO_OPTIONS_COMMON,
+	{
+		.name	= "mode",
+		.lname	= "XXX",
+		.type	= FIO_OPT_STR,
+		.off1	= offsetof(struct librpma_fio_options_values, aof_mode),
+		.help	= "XXX",
+		.def	= "",
+		.posval = {
+			{
+				.ival = "classic",
+				.oval = LIBRPMA_AOF_MODE_CLASSIC,
+				.help = "classic",
+			},
+			{
+				.ival = "XXX",
+				.oval = LIBRPMA_AOF_MODE_XXX,
+				.help = "XXX",
+			},
+		},
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
+		.name	= NULL,
+	},
+};
+
 struct server_data {
 	/* aligned td->orig_buffer - the messaging buffer (sending and receiving) */
 	char *orig_buffer_aligned;
@@ -379,29 +408,62 @@ struct server_data {
 	uint32_t msg_queued_nr;
 };
 
+static int server_classic_init(struct thread_data *td);
+static int server_classic_post_init(struct thread_data *td);
+static int server_classic_open_file(struct thread_data *td, struct fio_file *f);
+static enum fio_q_status server_classic_queue(struct thread_data *td,
+		struct io_u *io_u);
+static void server_classic_cleanup(struct thread_data *td);
+
+static int server_xxx_open_file(struct thread_data *td, struct fio_file *f);
+static enum fio_q_status server_xxx_queue(struct thread_data *td,
+		struct io_u *io_u);
+
 static int server_init(struct thread_data *td)
 {
-	struct librpma_fio_server_data *csd;
-	struct server_data *sd;
+	struct librpma_fio_options_values *o = td->eo;
 	int ret = -1;
 
 	if ((ret = librpma_fio_server_init(td)))
 		return ret;
 
-	csd = td->io_ops_data;
+	if (o->aof_mode == LIBRPMA_AOF_MODE_CLASSIC) {
+		if ((ret = server_classic_init(td))) {
+			librpma_fio_server_cleanup(td);
+			return ret;
+		}
+
+		td->io_ops->post_init = server_classic_post_init;
+		td->io_ops->open_file = server_classic_open_file;
+		td->io_ops->queue = server_classic_queue;
+		td->io_ops->cleanup = server_classic_cleanup;
+	} else { /* LIBRPMA_AOF_MODE_XXX */
+		td->io_ops->open_file = server_xxx_open_file;
+		td->io_ops->queue = server_xxx_queue;
+		td->io_ops->cleanup = librpma_fio_server_cleanup;
+	}
+
+	return 0;
+}
+
+static int server_classic_init(struct thread_data *td)
+{
+	struct librpma_fio_server_data *csd = td->io_ops_data;
+	struct server_data *sd;
 
 	/* allocate server's data */
 	sd = calloc(1, sizeof(*sd));
 	if (sd == NULL) {
 		td_verror(td, errno, "calloc");
-		goto err_server_cleanup;
+		return -1;
 	}
 
 	/* allocate in-memory queue */
 	sd->msgs_queued = calloc(td->o.iodepth, sizeof(*sd->msgs_queued));
 	if (sd->msgs_queued == NULL) {
 		td_verror(td, errno, "calloc");
-		goto err_free_sd;
+		free(sd);
+		return -1;
 	}
 
 	/*
@@ -415,17 +477,9 @@ static int server_init(struct thread_data *td)
 	csd->server_data = sd;
 
 	return 0;
-
-err_free_sd:
-	free(sd);
-
-err_server_cleanup:
-	librpma_fio_server_cleanup(td);
-
-	return -1;
 }
 
-static int server_post_init(struct thread_data *td)
+static int server_classic_post_init(struct thread_data *td)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
@@ -473,7 +527,7 @@ static int server_post_init(struct thread_data *td)
 	return 0;
 }
 
-static void server_cleanup(struct thread_data *td)
+static void server_classic_cleanup(struct thread_data *td)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd;
@@ -496,7 +550,7 @@ static void server_cleanup(struct thread_data *td)
 	librpma_fio_server_cleanup(td);
 }
 
-static int prepare_connection(struct thread_data *td,
+static int server_classic_prepare_connection(struct thread_data *td,
 		struct rpma_conn_req *conn_req)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
@@ -519,14 +573,14 @@ static int prepare_connection(struct thread_data *td,
 	return 0;
 }
 
-static int server_open_file(struct thread_data *td, struct fio_file *f)
+static int server_classic_open_file(struct thread_data *td, struct fio_file *f)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct rpma_conn_cfg *cfg = NULL;
 	uint16_t max_msg_num = td->o.iodepth;
 	int ret;
 
-	csd->prepare_connection = prepare_connection;
+	csd->prepare_connection = server_classic_prepare_connection;
 
 	/* create a connection configuration object */
 	if ((ret = rpma_conn_cfg_new(&cfg))) {
@@ -564,7 +618,12 @@ err_cfg_delete:
 	return ret;
 }
 
-static int server_qe_process(struct thread_data *td,
+static int server_xxx_open_file(struct thread_data *td, struct fio_file *f)
+{
+	return librpma_fio_server_open_file(td, f, NULL);
+}
+
+static int server_classic_qe_process(struct thread_data *td,
 		struct rpma_completion *cmpl)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
@@ -659,7 +718,7 @@ err_terminate:
 	return -1;
 }
 
-static inline int server_queue_process(struct thread_data *td)
+static inline int server_classic_queue_process(struct thread_data *td)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
@@ -673,7 +732,7 @@ static inline int server_queue_process(struct thread_data *td)
 
 	/* process queued completions */
 	for (i = 0; i < qes_to_process; ++i) {
-		if ((ret = server_qe_process(td, &sd->msgs_queued[i])))
+		if ((ret = server_classic_qe_process(td, &sd->msgs_queued[i])))
 			return ret;
 	}
 
@@ -689,7 +748,7 @@ static inline int server_queue_process(struct thread_data *td)
 	return 0;
 }
 
-static int server_cmpl_process(struct thread_data *td)
+static int server_classic_cmpl_process(struct thread_data *td)
 {
 	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct server_data *sd = csd->server_data;
@@ -722,13 +781,14 @@ err_terminate:
 	return -1;
 }
 
-static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status server_classic_queue(struct thread_data *td,
+		struct io_u *io_u)
 {
 	do {
-		if (server_cmpl_process(td))
+		if (server_classic_cmpl_process(td))
 			return FIO_Q_BUSY;
 
-		if (server_queue_process(td))
+		if (server_classic_queue_process(td))
 			return FIO_Q_BUSY;
 
 	} while (!td->done);
@@ -736,19 +796,30 @@ static enum fio_q_status server_queue(struct thread_data *td, struct io_u *io_u)
 	return FIO_Q_COMPLETED;
 }
 
+static enum fio_q_status server_xxx_queue(struct thread_data *td,
+		struct io_u *io_u)
+{
+	return FIO_Q_COMPLETED;
+}
+
 FIO_STATIC struct ioengine_ops ioengine_server = {
 	.name			= "librpma_aof_server",
 	.version		= FIO_IOOPS_VERSION,
 	.init			= server_init,
-	.post_init		= server_post_init,
-	.open_file		= server_open_file,
+	.post_init		= NULL, /* * */
+	.open_file		= NULL, /* * */
 	.close_file		= librpma_fio_server_close_file,
-	.queue			= server_queue,
+	.queue			= NULL, /* * */
 	.invalidate		= librpma_fio_file_nop,
-	.cleanup		= server_cleanup,
+	.cleanup		= NULL, /* * */
 	.flags			= FIO_SYNCIO,
-	.options		= librpma_fio_options,
+	.options		= librpma_aof_options,
 	.option_struct_size	= sizeof(struct librpma_fio_options_values),
+
+	/*
+	 * *) the actual implementation is picked in the server_init hook
+	 *    according to the picked aof_mode value
+	 */
 };
 
 /* register both engines */

@@ -18,37 +18,7 @@
 #include <libpmem.h>
 
 struct fio_option librpma_fio_options[] = {
-	{
-		.name	= "serverip",
-		.lname	= "rpma_server_ip",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_fio_options_values, server_ip),
-		.help	= "IP address the server is listening on",
-		.def	= "",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA,
-	},
-	{
-		.name	= "port",
-		.lname	= "rpma_server port",
-		.type	= FIO_OPT_STR_STORE,
-		.off1	= offsetof(struct librpma_fio_options_values, port),
-		.help	= "port the server is listening on",
-		.def	= "7204",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA,
-	},
-	{
-		.name	= "direct_write_to_pmem",
-		.lname	= "Direct Write to PMem (via RDMA) from the remote host is possible",
-		.type	= FIO_OPT_BOOL,
-		.off1	= offsetof(struct librpma_fio_options_values,
-					direct_write_to_pmem),
-		.help	= "Set to true ONLY when Direct Write to PMem from the remote host is possible (https://pmem.io/rpma/documentation/basic-direct-write-to-pmem.html)",
-		.def	= "",
-		.category = FIO_OPT_C_ENGINE,
-		.group	= FIO_OPT_G_LIBRPMA,
-	},
+	LIBRPMA_FIO_OPTIONS_COMMON,
 	{
 		.name	= NULL,
 	},
