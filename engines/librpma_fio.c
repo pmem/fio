@@ -280,7 +280,7 @@ int librpma_fio_client_init(struct thread_data *td,
 
 	if (retry > 0)
 		log_err("Thread [%d]: Connected after retry #%i\n",
-			td->thread_number, retry + 1);
+			td->thread_number, retry);
 
 	if (ccd->conn == NULL)
 		goto err_peer_delete;
