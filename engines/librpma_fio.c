@@ -718,7 +718,12 @@ int librpma_fio_client_getevents(struct thread_data *td, unsigned int min,
 			/* new completions collected */
 			cmpl_num_total += cmpl_num;
 		} else if (cmpl_num == 0) {
-			if (cmpl_num_total >= min)
+			/*
+			 * It is required to make sure that CQEs for SENDs
+			 * will flow at least at the same pace as CQEs for RECVs.
+			 */
+			if (cmpl_num_total >= min &&
+			    ccd->op_send_completed >= ccd->op_recv_completed)
 				break;
 
 			/*
@@ -739,7 +744,7 @@ int librpma_fio_client_getevents(struct thread_data *td, unsigned int min,
 		 * SENDs will flow at least at the same pace as CQEs for RECVs.
 		 */
 	} while (cmpl_num_total < max ||
-			ccd->op_send_completed != ccd->op_recv_completed);
+			ccd->op_send_completed < ccd->op_recv_completed);
 
 	/*
 	 * All posted SENDs are completed and RECVs for them (responses) are
