@@ -179,6 +179,7 @@ int librpma_fio_client_init(struct thread_data *td,
 	struct rpma_conn_private_data pdata;
 	enum rpma_log_level log_level_aux = RPMA_LOG_LEVEL_WARNING;
 	int remote_flush_type;
+	int retry;
 	int ret;
 
 	/* --debug=net sets RPMA_LOG_THRESHOLD_AUX to RPMA_LOG_LEVEL_INFO */
@@ -235,7 +236,7 @@ int librpma_fio_client_init(struct thread_data *td,
 	if (librpma_fio_td_port(o->port, td, port_td))
 		goto err_peer_delete;
 
-	for (int retry = 0; retry < LIBRPMA_FIO_RETRY_MAX_NO; retry++) {
+	for (retry = 0; retry < LIBRPMA_FIO_RETRY_MAX_NO; retry++) {
 		if ((ret = rpma_conn_req_new(ccd->peer, o->server_ip, port_td,
 				cfg, &req))) {
 			librpma_td_verror(td, ret, "rpma_conn_req_new");
@@ -261,12 +262,12 @@ int librpma_fio_client_init(struct thread_data *td,
 			(void) rpma_conn_disconnect(ccd->conn);
 			(void) rpma_conn_delete(&ccd->conn);
 			if (retry < LIBRPMA_FIO_RETRY_MAX_NO - 1) {
-				log_err("Thread [%d]: Retrying...\n",
-					td->thread_number);
+				log_err("Thread [%d]: Retrying (#%i) ...\n",
+					td->thread_number, retry + 1);
 				sleep(LIBRPMA_FIO_RETRY_DELAY_S);
 			} else {
 				log_err(
-					"Thread [%d]: The retry number exceeded. Closing.\n",
+					"Thread [%d]: The maximum number of retries exceeded. Closing.\n",
 					td->thread_number);
 			}
 		} else {
@@ -276,6 +277,10 @@ int librpma_fio_client_init(struct thread_data *td,
 			goto err_conn_delete;
 		}
 	}
+
+	if (retry > 0)
+		log_err("Thread [%d]: Connected after retry #%i\n",
+			td->thread_number, retry + 1);
 
 	if (ccd->conn == NULL)
 		goto err_peer_delete;
