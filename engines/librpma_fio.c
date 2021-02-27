@@ -871,7 +871,7 @@ int librpma_fio_server_open_file(struct thread_data *td, struct fio_file *f,
 	struct librpma_fio_server_data *csd = td->io_ops_data;
 	struct librpma_fio_options_values *o = td->eo;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
-	struct librpma_fio_workspace ws;
+	struct librpma_fio_workspace ws = {0};
 	struct rpma_conn_private_data pdata;
 	uint32_t max_msg_num;
 	struct rpma_conn_req *conn_req;
