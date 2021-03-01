@@ -236,10 +236,89 @@ static int client_hw_get_io_u_index(struct rpma_completion *cmpl,
 
 static int client_hw_init(struct thread_data *td)
 {
-	/* XXX */
+	struct librpma_fio_client_data *ccd;
+	struct client_data *cd;
+	uint32_t flush_num;
+	uint32_t write_num;
+	struct rpma_conn_cfg *cfg = NULL;
+	int ret;
 
-	(void) client_hw_io_append;
-	(void) client_hw_get_io_u_index;
+	/* allocate client's data */
+	cd = calloc(1, sizeof(*cd));
+	if (cd == NULL) {
+		td_verror(td, errno, "calloc");
+		return -1;
+	}
+
+	/*
+	 * Calculate the required number of FLUSHes and WRITEs.
+	 *
+	 * Note: There are no UPDATEes.
+	 */
+	if (td->o.sync_io) {
+		write_num = 1; /* atomic WRITE */
+		flush_num = 2; /* FLUSH */
+		cd->msg_num = 0; /* no SENDs */
+	} else {
+		write_num = td->o.iodepth; /* WRITE * N */
+		/*
+		 * 2 * FLUSH * B where:
+		 * - B == ceil(iodepth / iodepth_batch)
+		 *   which is the number of batches for N writes
+		 */
+		flush_num = 2 * LIBRPMA_FIO_CEIL(td->o.iodepth,
+				td->o.iodepth_batch);
+		cd->msg_num = 0; /* no SENDs */
+	}
+
+	/* create a connection configuration object */
+	if ((ret = rpma_conn_cfg_new(&cfg))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
+		goto err_free_cd;
+	}
+
+	/*
+	 * Calculate the required queue sizes where:
+	 * - the send queue (SQ) has to be big enough to accommodate
+	 *   all io_us (WRITEs) and all flushes (READs)
+	 * - the receive queue (RQ) is not used
+	 * - the completion queue (CQ) has to be big enough to accommodate all
+	 *   success and error completions (sq_size)
+	 */
+	if ((ret = rpma_conn_cfg_set_sq_size(cfg, write_num + flush_num))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_sq_size");
+		goto err_cfg_delete;
+	}
+	if ((ret = rpma_conn_cfg_set_rq_size(cfg, 0))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_rq_size");
+		goto err_cfg_delete;
+	}
+	if ((ret = rpma_conn_cfg_set_cq_size(cfg, write_num + flush_num))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_set_cq_size");
+		goto err_cfg_delete;
+	}
+
+	if (librpma_fio_client_init(td, cfg))
+		goto err_cfg_delete;
+
+	ccd = td->io_ops_data;
+
+	if ((ret = rpma_conn_cfg_delete(&cfg))) {
+		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
+		/* non fatal error - continue */
+	}
+
+	ccd->flush = client_hw_io_append;
+	ccd->get_io_u_index = client_hw_get_io_u_index;
+	ccd->client_data = cd;
+
+	return 0;
+
+err_cfg_delete:
+	(void) rpma_conn_cfg_delete(&cfg);
+
+err_free_cd:
+	free(cd);
 
 	return -1;
 }
