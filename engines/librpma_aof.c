@@ -417,13 +417,46 @@ static int client_hw_io_append(struct thread_data *td,
 		struct io_u *first_io_u, struct io_u *last_io_u,
 		unsigned long long int len)
 {
-	/*
-	 * rpma_flush()
-	 * rpma_atomic_write()
-	 * rpma_flush() + completion
-	 */
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
+	struct client_data *cd = ccd->client_data;
+	size_t io_u_buf_off = IO_U_NEXT_BUF_OFF_CLIENT(cd);
+	size_t pointer_offset = io_u_buf_off + SEND_OFFSET;
+	uint64_t *pointer_ptr = (uint64_t *)cd->io_us_msgs + pointer_offset;
+	size_t src_offset;
+	size_t dst_offset;
+	int ret;
 
-	return -1;
+	/* flush the appended data */
+	if ((ret = rpma_flush(ccd->conn, ccd->server_mr, first_io_u->offset, len,
+			ccd->server_mr_flush_type, RPMA_F_COMPLETION_ON_ERROR,
+			(void *)(uintptr_t)last_io_u->index))) {
+		librpma_td_verror(td, ret, "rpma_flush");
+		return -1;
+	}
+
+	/* update the pointer */
+	*pointer_ptr = first_io_u->offset + len; /* value of the AOF pointer */
+	src_offset = pointer_offset; /* source offset of the AOF pointer */
+	dst_offset = ccd->ws_size; /* destination offset of the AOF pointer */
+
+	if ((ret = rpma_write_atomic(ccd->conn, ccd->server_mr, dst_offset,
+			cd->msg_mr, src_offset, RPMA_F_COMPLETION_ON_ERROR,
+			(void *)(uintptr_t)last_io_u->index))) {
+		librpma_td_verror(td, ret, "rpma_write_atomic");
+		return -1;
+	}
+
+	/* flush the AOF pointer */
+	if ((ret = rpma_flush(ccd->conn, ccd->server_mr, first_io_u->offset, len,
+			ccd->server_mr_flush_type, RPMA_F_COMPLETION_ALWAYS,
+			(void *)(uintptr_t)last_io_u->index))) {
+		librpma_td_verror(td, ret, "rpma_flush");
+		return -1;
+	}
+
+	/* XXX what about counters ? */
+
+	return 0;
 }
 
 static int client_hw_get_io_u_index(struct rpma_completion *cmpl,
