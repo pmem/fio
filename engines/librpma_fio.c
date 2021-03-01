@@ -368,7 +368,7 @@ int librpma_fio_file_nop(struct thread_data *td, struct fio_file *f)
 int librpma_fio_client_post_init(struct thread_data *td)
 {
 	struct librpma_fio_client_data *ccd =  td->io_ops_data;
-	size_t io_us_size;
+	size_t mr_reg_size;
 	int ret;
 
 	/*
@@ -382,10 +382,13 @@ int librpma_fio_client_post_init(struct thread_data *td)
 	 * td->orig_buffer_size beside the space really consumed by io_us
 	 * has paddings which can be omitted for the memory registration.
 	 */
-	io_us_size = (unsigned long long)td_max_bs(td) *
+	ccd->io_us_size = (unsigned long long)td_max_bs(td) *
 			(unsigned long long)td->o.iodepth;
 
-	if ((ret = rpma_mr_reg(ccd->peer, ccd->orig_buffer_aligned, io_us_size,
+	/* reserve space (sizeof(uint64_t)) for the AOF pointer at the end */
+	mr_reg_size = ccd->io_us_size + sizeof(uint64_t);
+
+	if ((ret = rpma_mr_reg(ccd->peer, ccd->orig_buffer_aligned, mr_reg_size,
 			RPMA_MR_USAGE_READ_DST | RPMA_MR_USAGE_READ_SRC |
 			RPMA_MR_USAGE_WRITE_DST | RPMA_MR_USAGE_WRITE_SRC |
 			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT, &ccd->orig_mr)))

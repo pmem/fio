@@ -162,6 +162,12 @@ struct librpma_fio_client_data {
 	/* aligned td->orig_buffer */
 	char *orig_buffer_aligned;
 
+	/*
+	 * Size of the memory registered for io_us
+	 * and offset of the AOF pointer.
+	 */
+	size_t io_us_size;
+
 	/* ious's base address memory registration (cd->orig_buffer_aligned) */
 	struct rpma_mr_local *orig_mr;
 
