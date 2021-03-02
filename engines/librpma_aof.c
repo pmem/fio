@@ -857,6 +857,16 @@ err_terminate:
 	return -1;
 }
 
+static enum fio_q_status server_queue(struct thread_data *td,
+		struct io_u *io_u)
+{
+	/*
+	 * The actual implementation is picked in the server_init hook
+	 * according to the chosen aof_mode value
+	 */
+	return 1;
+}
+
 static enum fio_q_status server_sw_queue(struct thread_data *td,
 		struct io_u *io_u)
 {
@@ -885,7 +895,7 @@ FIO_STATIC struct ioengine_ops ioengine_server = {
 	.post_init		= NULL, /* see the (*) notice below */
 	.open_file		= NULL, /* see the (*) notice below */
 	.close_file		= librpma_fio_server_close_file,
-	.queue			= NULL, /* see the (*) notice below */
+	.queue			= server_queue, /* see the (*) notice below */
 	.invalidate		= librpma_fio_file_nop,
 	.cleanup		= NULL, /* see the (*) notice below */
 	.flags			= FIO_SYNCIO,
