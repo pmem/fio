@@ -94,6 +94,8 @@ static int client_sw_post_init(struct thread_data *td);
 static void client_sw_cleanup(struct thread_data *td);
 
 static int client_hw_init(struct thread_data *td);
+static int client_hw_post_init(struct thread_data *td);
+static void client_hw_cleanup(struct thread_data *td);
 
 static int client_init(struct thread_data *td)
 {
@@ -122,8 +124,8 @@ static int client_init(struct thread_data *td)
 		if ((ret = client_hw_init(td)))
 			return ret;
 
-		td->io_ops->post_init = librpma_fio_client_post_init;
-		td->io_ops->cleanup = librpma_fio_client_cleanup;
+		td->io_ops->post_init = client_hw_post_init;
+		td->io_ops->cleanup = client_hw_cleanup;
 
 		librpma_td_log(td,
 			LIBRPMA_AOF_MODE_LNAME ": " LIBRPMA_AOF_MODE_HW_HELP);
@@ -498,6 +500,56 @@ static int client_sw_get_io_u_index(struct rpma_completion *cmpl,
 	aof_update_response__free_unpacked(update_resp, NULL);
 
 	return 1;
+}
+
+static int client_hw_post_init(struct thread_data *td)
+{
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
+	struct client_data_hw *cd = ccd->client_data;
+	int ret;
+
+	/* AOF pointer buffer initialization */
+	if ((ret = posix_memalign((void **)&cd->aof_ptr, page_size, AOF_PTR_SIZE))) {
+		td_verror(td, ret, "posix_memalign");
+		return -1;
+	}
+
+	/* AOF pointer buffer registration */
+	if ((ret = rpma_mr_reg(ccd->peer, cd->aof_ptr, AOF_PTR_SIZE,
+			RPMA_MR_USAGE_WRITE_SRC, &cd->aof_ptr_mr))) {
+		librpma_td_verror(td, ret, "rpma_mr_reg");
+		free(cd->aof_ptr);
+		return -1;
+	}
+
+	return librpma_fio_client_post_init(td);
+}
+
+static void client_hw_cleanup(struct thread_data *td)
+{
+	struct librpma_fio_client_data *ccd = td->io_ops_data;
+	struct client_data_hw *cd;
+	int ret;
+
+	if (ccd == NULL)
+		return;
+
+	cd = ccd->client_data;
+	if (cd == NULL) {
+		librpma_fio_client_cleanup(td);
+		return;
+	}
+
+	/* deregister the AOF pointer memory */
+	if ((ret = rpma_mr_dereg(&cd->aof_ptr_mr)))
+		librpma_td_verror(td, ret, "rpma_mr_dereg");
+
+	/* free the AOF pointer's memory */
+	free(cd->aof_ptr);
+
+	free(ccd->client_data);
+
+	librpma_fio_client_cleanup(td);
 }
 
 static int client_hw_io_append(struct thread_data *td,
