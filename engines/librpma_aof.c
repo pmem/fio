@@ -248,9 +248,17 @@ static int client_hw_init(struct thread_data *td)
 {
 	struct librpma_fio_client_data *ccd;
 	struct rpma_conn_cfg *cfg = NULL;
+	struct client_data_hw *cd;
 	uint32_t write_num;
 	uint32_t update_num;
 	int ret;
+
+	/* allocate client's data */
+	cd = calloc(1, sizeof(*cd));
+	if (cd == NULL) {
+		td_verror(td, errno, "calloc");
+		return -1;
+	}
 
 	/*
 	 * Calculate the required number of WRITEs and AOF updates.
@@ -274,7 +282,7 @@ static int client_hw_init(struct thread_data *td)
 	/* create a connection configuration object */
 	if ((ret = rpma_conn_cfg_new(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_new");
-		return -1;
+		goto err_free_cd;
 	}
 
 	/*
@@ -310,11 +318,15 @@ static int client_hw_init(struct thread_data *td)
 
 	ccd->flush = client_hw_io_append;
 	ccd->get_io_u_index = client_hw_get_io_u_index;
+	ccd->client_data = cd;
 
 	return 0;
 
 err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
+
+err_free_cd:
+	free(cd);
 
 	return -1;
 }
