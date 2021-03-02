@@ -593,9 +593,17 @@ static int client_hw_io_append(struct thread_data *td,
 static int client_hw_get_io_u_index(struct rpma_completion *cmpl,
 		unsigned int *io_u_index)
 {
-	/* XXX */
+	if (cmpl->op_status != IBV_WC_SUCCESS) {
+		log_err("the %s operation of io_u #%i failed with the status: %s\n",
+			(cmpl->op == RPMA_OP_WRITE) ? "ATOMIC WRITE" : "FLUSH",
+			*(unsigned *)cmpl->op_context,
+			ibv_wc_status_str(cmpl->op_status));
+		return -1;
+	}
 
-	return -1;
+	*io_u_index = *(unsigned *)cmpl->op_context;
+
+	return 1;
 }
 
 FIO_STATIC struct ioengine_ops ioengine_client = {
