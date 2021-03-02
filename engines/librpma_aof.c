@@ -80,7 +80,6 @@ struct client_data {
 };
 
 static int client_sw_init(struct thread_data *td);
-static int client_sw_post_init(struct thread_data *td);
 static void client_sw_cleanup(struct thread_data *td);
 
 static int client_hw_init(struct thread_data *td);
@@ -103,7 +102,7 @@ static int client_init(struct thread_data *td)
 		if ((ret = client_sw_init(td)))
 			return ret;
 
-		td->io_ops->post_init = client_sw_post_init;
+		td->io_ops->post_init = librpma_fio_client_post_init;
 		td->io_ops->cleanup = client_sw_cleanup;
 
 		librpma_td_log(td,
@@ -135,6 +134,7 @@ static int client_sw_init(struct thread_data *td)
 	struct client_data *cd;
 	uint32_t write_num;
 	struct rpma_conn_cfg *cfg = NULL;
+	unsigned int io_us_msgs_size;
 	int ret;
 
 	/* allocate client's data */
@@ -204,6 +204,21 @@ static int client_sw_init(struct thread_data *td)
 		goto err_cleanup_common;
 	}
 
+	/* message buffers initialization and registration */
+	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
+	if ((ret = posix_memalign((void **)&cd->io_us_msgs, page_size,
+			io_us_msgs_size))) {
+		td_verror(td, ret, "posix_memalign");
+		goto err_cleanup_common;
+	}
+
+	if ((ret = rpma_mr_reg(ccd->peer, cd->io_us_msgs, io_us_msgs_size,
+			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
+			&cd->msg_mr))) {
+		librpma_td_verror(td, ret, "rpma_mr_reg");
+		goto err_free_io_us_msgs;
+	}
+
 	if ((ret = rpma_conn_cfg_delete(&cfg))) {
 		librpma_td_verror(td, ret, "rpma_conn_cfg_delete");
 		/* non fatal error - continue */
@@ -214,6 +229,9 @@ static int client_sw_init(struct thread_data *td)
 	ccd->client_data = cd;
 
 	return 0;
+
+err_free_io_us_msgs:
+	free(cd->io_us_msgs);
 
 err_cleanup_common:
 	librpma_fio_client_cleanup(td);
@@ -307,30 +325,6 @@ err_cfg_delete:
 	(void) rpma_conn_cfg_delete(&cfg);
 
 	return -1;
-}
-
-static int client_sw_post_init(struct thread_data *td)
-{
-	struct librpma_fio_client_data *ccd = td->io_ops_data;
-	struct client_data *cd = ccd->client_data;
-	unsigned int io_us_msgs_size;
-	int ret;
-
-	/* message buffers initialization and registration */
-	io_us_msgs_size = cd->msg_num * IO_U_BUF_LEN;
-	if ((ret = posix_memalign((void **)&cd->io_us_msgs, page_size,
-			io_us_msgs_size))) {
-		td_verror(td, ret, "posix_memalign");
-		return ret;
-	}
-	if ((ret = rpma_mr_reg(ccd->peer, cd->io_us_msgs, io_us_msgs_size,
-			RPMA_MR_USAGE_SEND | RPMA_MR_USAGE_RECV,
-			&cd->msg_mr))) {
-		librpma_td_verror(td, ret, "rpma_mr_reg");
-		return ret;
-	}
-
-	return librpma_fio_client_post_init(td);
 }
 
 static int client_get_file_size(struct thread_data *td, struct fio_file *f)
