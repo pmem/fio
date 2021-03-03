@@ -120,12 +120,14 @@ static int client_init(struct thread_data *td)
 		if ((ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true))) {
 			librpma_td_verror(td, ret,
 				"rpma_peer_cfg_set_direct_write_to_pmem");
+			(void) rpma_peer_cfg_delete(&pcfg);
 			goto err_cleanup_common;
 		}
 
 		if ((ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg))) {
 			librpma_td_verror(td, ret,
 				"rpma_conn_apply_remote_peer_cfg");
+			(void) rpma_peer_cfg_delete(&pcfg);
 			goto err_cleanup_common;
 		}
 
