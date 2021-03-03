@@ -264,6 +264,7 @@ static int client_hw_init(struct thread_data *td)
 {
 	struct librpma_fio_client_data *ccd;
 	struct rpma_conn_cfg *cfg = NULL;
+	struct rpma_peer_cfg *pcfg = NULL;
 	struct client_data_hw *cd;
 	uint32_t write_num;
 	uint32_t update_num;
@@ -326,6 +327,40 @@ static int client_hw_init(struct thread_data *td)
 		goto err_cfg_delete;
 
 	ccd = td->io_ops_data;
+
+	if (ccd->server_mr_flush_type == RPMA_FLUSH_TYPE_PERSISTENT) {
+		if (!ccd->ws->direct_write_to_pmem) {
+			if (td->thread_number == 1)
+				log_err(
+					"Fio librpma engine will not work until the Direct Write to PMem on the server side is possible (direct_write_to_pmem)\n");
+			goto err_cleanup_common;
+		}
+
+		/* configure peer's direct write to pmem support */
+		if ((ret = rpma_peer_cfg_new(&pcfg))) {
+			librpma_td_verror(td, ret, "rpma_peer_cfg_new");
+			goto err_cleanup_common;
+		}
+
+		if ((ret = rpma_peer_cfg_set_direct_write_to_pmem(pcfg, true))) {
+			librpma_td_verror(td, ret,
+				"rpma_peer_cfg_set_direct_write_to_pmem");
+			goto err_cleanup_common;
+		}
+
+		if ((ret = rpma_conn_apply_remote_peer_cfg(ccd->conn, pcfg))) {
+			librpma_td_verror(td, ret,
+				"rpma_conn_apply_remote_peer_cfg");
+			goto err_cleanup_common;
+		}
+
+		(void) rpma_peer_cfg_delete(&pcfg);
+	} else if (td->thread_number == 1) {
+		/* XXX log_info mixes with the JSON output */
+		log_err(
+			"Note: Direct Write to PMem is not supported by default nor required if you use DRAM instead of PMem on the server side (direct_write_to_pmem).\n"
+			"Remember that flushing to DRAM does not make your data persistent and may be used only for experimental purposes.\n");
+	}
 
 	/* AOF pointer buffer initialization */
 	if ((ret = posix_memalign((void **)&cd->aof_ptr, page_size, AOF_PTR_SIZE))) {
