@@ -2171,6 +2171,11 @@ with the caveat that when used on the command line, they must come after the
 	Set to 1 only when Direct Write to PMem from the remote host is possible.
 	Otherwise, set to 0.
 
+.. option:: completion_wait=bool : [librpma_*_server]
+
+	Set to 1 to use rpma_conn_completion_wait() instead of polling completions.
+	Default: 0.
+
 .. option:: interface=str : [netsplice] [net]
 
 	The IP address of the network interface used to send or receive UDP

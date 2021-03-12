@@ -50,6 +50,17 @@ struct fio_option librpma_fio_options[] = {
 		.group	= FIO_OPT_G_LIBRPMA,
 	},
 	{
+		.name	= "completion_wait",
+		.lname	= "use rpma_conn_completion_wait() instead of polling completions",
+		.type	= FIO_OPT_BOOL,
+		.off1	= offsetof(struct librpma_fio_options_values,
+					completion_wait),
+		.help	= "Set to true if you want to reduce CPU usage",
+		.def	= "0",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_LIBRPMA,
+	},
+	{
 		.name	= NULL,
 	},
 };
