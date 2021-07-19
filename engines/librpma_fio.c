@@ -81,12 +81,15 @@ char *librpma_fio_allocate_pmem(struct thread_data *td, const char *filename,
 		return NULL;
 	}
 
-	ws_offset = (td->thread_number - 1) * size;
-
 	if (!filename) {
 		log_err("fio: filename is not set\n");
 		return NULL;
 	}
+
+	if (strncmp(filename, "/dev/dax", strlen("/dev/dax")) == 0)
+		ws_offset = (td->thread_number - 1) * size;
+	else
+		ws_offset = 0;
 
 	/* map the file */
 	mem_ptr = pmem_map_file(filename, 0 /* len */, 0 /* flags */,
